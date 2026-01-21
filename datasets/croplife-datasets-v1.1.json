@@ -1,0 +1,177 @@
+[
+  {
+    "name": "Agents",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": false,
+    "classes": [
+      "Agent"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:croplife-dlc:agents",
+    "id": "urn:croplife-dlc:agents",
+    "account": "dlc-template",
+    "project": "croplife-dlc"
+  },
+  {
+    "name": "Biology",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": true,
+    "classes": [
+      "BiologicalClassification",
+      "FungalLifecycleStage",
+      "GrowthStage",
+      "GrowthStageDescription",
+      "GrowthStageScale",
+      "LifecycleStage",
+      "Organism",
+      "PestLifecycleStage",
+      "PlantLifecycleStage"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:croplife-dlc:biology",
+    "id": "urn:croplife-dlc:biology",
+    "account": "dlc-template",
+    "project": "croplife-dlc"
+  },
+  {
+    "name": "Chemistry",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": true,
+    "classes": [
+      "ChemicalClass",
+      "Substance"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:croplife-dlc:chemistry",
+    "id": "urn:croplife-dlc:chemistry",
+    "account": "dlc-template",
+    "project": "croplife-dlc"
+  },
+  {
+    "name": "Geography",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": true,
+    "classes": [
+      "Country"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:croplife-dlc:geography",
+    "id": "urn:croplife-dlc:geography",
+    "account": "dlc-template",
+    "project": "croplife-dlc"
+  },
+  {
+    "name": "Market",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": true,
+    "classes": [
+      "CropCommodity"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:croplife-dlc:market",
+    "id": "urn:croplife-dlc:market",
+    "account": "dlc-template",
+    "project": "croplife-dlc"
+  },
+  {
+    "name": "Packaging",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": false,
+    "classes": [
+      "ProductPackage"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:croplife-dlc:packaging",
+    "id": "urn:croplife-dlc:packaging",
+    "account": "dlc-template",
+    "project": "croplife-dlc"
+  },
+  {
+    "name": "Reference Data",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": true,
+    "classes": [
+      "AdverseEffectType",
+      "AngleUnit",
+      "ApplicationMethod",
+      "ApplicationTargetSite",
+      "BufferZoneType",
+      "ClpControlledHazardStatement",
+      "ClpControlledPrecaution",
+      "CoformulantsQbaStatement",
+      "ComplexUnit",
+      "ConcentrationUnit",
+      "CropOutcome",
+      "CropRelation",
+      "DistanceUnit",
+      "DosageUnit",
+      "DurationUnit",
+      "FungalLifecycleStage",
+      "GeneralLifecycleStage",
+      "GrowthLocation",
+      "HazardClassification",
+      "InformationSource",
+      "LandUseType",
+      "LifecycleStage",
+      "MassUnit",
+      "MaterialState",
+      "ModeOfAction",
+      "ModeOfActionScheme",
+      "ModelVersion",
+      "NozzleClass",
+      "PackagingMaterial",
+      "PackageType",
+      "PackagingDisposalOrganisation",
+      "PercentageUnit",
+      "PestLifecycleStage",
+      "PhoneNumberType",
+      "PlantDensityUnit",
+      "PlantLifecycleStage",
+      "PreparationType",
+      "PressureUnit",
+      "ProductActionType",
+      "PublicationStatus",
+      "RegulatorControlledHazardStatement",
+      "RegulatorControlledPrecaution",
+      "RegulatorStatementCategory",
+      "SafetyIntervalType",
+      "SeedRateUnit",
+      "SoilType",
+      "SubjectAtRisk",
+      "SubstanceRole",
+      "TemperatureUnit",
+      "UnitOfMeasurement",
+      "VelocityUnit",
+      "VolumeUnit"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:croplife-dlc:reference-data",
+    "id": "urn:croplife-dlc:reference-data",
+    "account": "dlc-template",
+    "project": "croplife-dlc"
+  },
+  {
+    "name": "Registered Formulation",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": false,
+    "classes": [
+      "Adjuvant",
+      "DirectionForUse",
+      "RegisteredFormulation",
+      "TankMixProduct"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:croplife-dlc:registered-formulation",
+    "id": "urn:croplife-dlc:registered-formulation",
+    "account": "dlc-template",
+    "project": "croplife-dlc"
+  }
+]

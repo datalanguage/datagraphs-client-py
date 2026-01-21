@@ -1,0 +1,143 @@
+[
+  {
+    "name": "Agents",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": false,
+    "classes": [
+      "Agent"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:syn-glgap-dev:agents",
+    "id": "urn:syn-glgap-dev:agents",
+    "account": "syngenta-e2e-dev",
+    "project": "syn-glgap-dev"
+  },
+  {
+    "name": "Biology",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": true,
+    "classes": [
+      "BiologicalClassification",
+      "FungalLifecycleStage",
+      "GrowthStage",
+      "GrowthStageDescription",
+      "GrowthStageScale",
+      "LifecycleStage",
+      "Organism",
+      "PestLifecycleStage",
+      "PlantLifecycleStage"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:syn-glgap-dev:biology",
+    "id": "urn:syn-glgap-dev:biology",
+    "account": "syngenta-e2e-dev",
+    "project": "syn-glgap-dev"
+  },
+  {
+    "name": "Chemistry",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": true,
+    "classes": [
+      "ChemicalClass",
+      "Substance"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:syn-glgap-dev:chemistry",
+    "id": "urn:syn-glgap-dev:chemistry",
+    "account": "syngenta-e2e-dev",
+    "project": "syn-glgap-dev"
+  },
+  {
+    "name": "Geography",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": true,
+    "classes": [
+      "Country"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:syn-glgap-dev:geography",
+    "id": "urn:syn-glgap-dev:geography",
+    "account": "syngenta-e2e-dev",
+    "project": "syn-glgap-dev"
+  },
+  {
+    "name": "Market",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": true,
+    "classes": [
+      "CropCommodity"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:syn-glgap-dev:market",
+    "id": "urn:syn-glgap-dev:market",
+    "account": "syngenta-e2e-dev",
+    "project": "syn-glgap-dev"
+  },
+  {
+    "name": "Reference Data",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": true,
+    "classes": [
+      "ApplicationMethod",
+      "ApplicationTargetSite",
+      "ComplexUnit",
+      "ConcentrationUnit",
+      "CropOutcome",
+      "DosageUnit",
+      "DurationUnit",
+      "GrowthLocation",
+      "LandUseType",
+      "ModeOfAction",
+      "ModeOfActionScheme",
+      "ModelVersion",
+      "PercentageUnit",
+      "PhoneNumberType",
+      "PlantDensityUnit",
+      "PreparationType",
+      "ProductActionType",
+      "PublicationStatus",
+      "SeedRateUnit",
+      "SubstanceRole"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:syn-glgap-dev:reference-data",
+    "id": "urn:syn-glgap-dev:reference-data",
+    "account": "syngenta-e2e-dev",
+    "project": "syn-glgap-dev"
+  },
+  {
+    "name": "GAP",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": false,
+    "classes": [
+      "Formulation",
+      "GapRecord"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:syn-glgap-dev:registered-formulation",
+    "id": "urn:syn-glgap-dev:registered-formulation",
+    "account": "syngenta-e2e-dev",
+    "project": "syn-glgap-dev"
+  },
+  {
+    "name": "Review",
+    "isPrivate": true,
+    "isPinned": false,
+    "isRestricted": false,
+    "classes": [
+      "ProposedChange"
+    ],
+    "type": "DataSet",
+    "namespace": "urn:syn-glgap-dev:registered-formulation",
+    "id": "urn:syn-glgap-dev:registered-formulation",
+    "account": "syngenta-e2e-dev",
+    "project": "syn-glgap-dev"
+  }  
+]
