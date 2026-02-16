@@ -2,7 +2,7 @@ import uuid
 import json
 import datetime
 from datagraphs.datatypes import DATATYPE
-from typing import Optional, Self
+from typing import Optional, Self, Union
 
 class SchemaError(Exception):
     """Base exception for Schema-related errors."""
@@ -18,6 +18,10 @@ class PropertyNotFoundError(SchemaError):
 
 class PropertyExistsError(SchemaError):
     """Raised when attempting to create a property that already exists."""
+    pass
+
+class InvalidInversePropertyError(SchemaError):
+    """Raised when an invalid inverse property is specified."""
     pass
 
 class Schema:
@@ -36,20 +40,18 @@ class Schema:
       DATATYPE.ENUM: {"elasticsearchDatatype": "keyword", "xsdDatatype": "string"},
   }
 
-  DEFAULT_PROJECT_URN = "urn:datagraphs:project"
-
-  def __init__(self, schema: Optional[dict] = None, version: str = '1.0', project_urn: str = ''):
+  def __init__(self, schema: Optional[dict] = None, name: str = "", version: str = '1.0', project: str = ''):
     if schema is None or len(schema) == 0:
-      schema = self._create_schema(project_urn or self.DEFAULT_PROJECT_URN)
+      schema = self._create_schema(project)
     else: 
       self._validate_schema(schema)
     if version:
-      schema['name'] = f"Domain Model v{version}"
+      schema['name'] = f"{name or 'Domain Model'} v{version}"
     schema['lastModifiedDate'] = datetime.datetime.now(datetime.UTC).isoformat()
     self._schema = schema
 
   @staticmethod
-  def _create_schema(project_urn: str) -> dict:
+  def _create_schema(project: str) -> dict:
     guid = uuid.uuid4().hex
     now = datetime.datetime.now(datetime.UTC).isoformat()
     return {
@@ -57,8 +59,8 @@ class Schema:
       "guid": str(guid),
       "type": "DomainModel",
       "name": "Domain Model",
-      "description": "",
-      "project": project_urn,
+      "description": "The project information model",
+      "project": f"urn:{project}:" if project else "",
       "createdDate": now,
       "lastModifiedDate": now,
       "classes": []
@@ -88,7 +90,7 @@ class Schema:
         "id": f"{self._schema['id']}:classes:{class_name}",
         "guid": str(guid),
         "model": self._schema["id"],
-        "project": self._schema.get("project", self.DEFAULT_PROJECT_URN),
+        "project": self._schema.get("project", ""),
         "label": class_name,
         "labelProperty": label_prop_name,
         "createdDate": now,
@@ -126,14 +128,14 @@ class Schema:
     if class_def is None:
       raise ClassNotFoundError(f"Parent class '{parent_class_name}' not found")
     label_prop_name = class_def['labelProperty']
-    label_prop_def = self.find_prop(class_def['objectProperties'], label_prop_name)
+    label_prop_def = self.find_property(class_def['objectProperties'], label_prop_name)
     self.create_class(class_name, description, parent_class_name, label_prop_name, label_prop_def.get('isLangString', False))
     for prop_def in class_def['objectProperties']:
       if prop_def['propertyName'] != label_prop_name:
         validation_rules = prop_def.get('validationRules', [])
         datatype = DATATYPE(prop_def['propertyDatatype']['label'])
         enums = validation_rules[0].get('value', []) if validation_rules else []
-        self.create_prop(
+        self.create_property(
           class_name,
           prop_def['propertyName'],
           datatype,
@@ -175,12 +177,12 @@ class Schema:
         if class_name in parent_def["parentClasses"]:
           parent_def["parentClasses"].remove(class_name)
 
-  def assign_label_prop(self, class_name: str, prop_name: str, is_lang_string: bool = True) -> None:
+  def assign_label_property(self, class_name: str, prop_name: str, is_lang_string: bool = True) -> None:
     class_def = self.find_class(class_name)
     if class_def is None:
       raise ClassNotFoundError(f"Class '{class_name}' not found")
     class_def["labelProperty"] = prop_name
-    prop_def = self.find_prop(class_def["objectProperties"], prop_name)
+    prop_def = self.find_property(class_def["objectProperties"], prop_name)
     if prop_def is None:
       raise PropertyNotFoundError(f"Property '{prop_name}' not found in class '{class_name}'")
     prop_def["isOptional"] = False
@@ -191,7 +193,7 @@ class Schema:
     if class_def is None:
       raise ClassNotFoundError(f"Class '{class_name}' not found")
     prop_name = class_def["labelProperty"]
-    prop_def = self.find_prop(class_def["objectProperties"], prop_name)
+    prop_def = self.find_property(class_def["objectProperties"], prop_name)
     if prop_def is None:
       raise PropertyNotFoundError(f"Label property '{prop_name}' not found in class '{class_name}'")
     prop_def['propertyValuePattern'] = pattern
@@ -223,7 +225,7 @@ class Schema:
       self, 
       class_name: str,
       prop_name: str,
-      datatype: DATATYPE,
+      datatype: Union[DATATYPE, str],
       description: str = "",
       is_array: bool = False,
       is_nested: bool = False,
@@ -233,16 +235,16 @@ class Schema:
     ) -> None:
     if enums is None:
       enums = []
-    self.create_prop(class_name, prop_name, datatype, description, is_array, is_nested, is_lang_string, inverse_of, enums)
+    self.create_property(class_name, prop_name, datatype, description, is_array, is_nested, is_lang_string, inverse_of, enums)
     subclasses = self.find_subclasses(class_name)
     for subclass in subclasses:
-      self.create_prop(subclass['label'], prop_name, datatype, description, is_array, is_nested, is_lang_string, inverse_of, enums)
+      self.create_property(subclass['label'], prop_name, datatype, description, is_array, is_nested, is_lang_string, inverse_of, enums)
 
-  def create_prop(
+  def create_property(
       self, 
       class_name: str,
       prop_name: str,
-      datatype: DATATYPE,
+      datatype: str,
       description: str = "",
       is_array: bool = False,
       is_nested: bool = False,
@@ -255,7 +257,7 @@ class Schema:
     class_def = self.find_class(class_name)
     if class_def is None:
       raise ClassNotFoundError(f"Class '{class_name}' not found")
-    existing_prop = self.find_prop(class_def["objectProperties"], prop_name)
+    existing_prop = self.find_property(class_def["objectProperties"], prop_name)
     if not (hasattr(datatype, 'value') and (datatype.value in set(i.value for i in DATATYPE))) and not isinstance(datatype, str):
       raise TypeError(f"Unspecified datatype for {class_name}.{prop_name}")
     if existing_prop is not None:
@@ -278,7 +280,7 @@ class Schema:
       "id": f"{self._schema['id']}:classes:{class_name}:{prop_name}",
       "propertyDescription": description
     }
-    if inverse_of:
+    if inverse_of and self._is_valid_inverse_of(class_name, inverse_of, datatype):
       prop_def["inverseOf"] = inverse_of
     prop_def["propertyDatatype"] = self._insert_datatype(prop_def, datatype, is_nested, is_lang_string)
     class_def["objectProperties"].append(prop_def)
@@ -287,6 +289,26 @@ class Schema:
         "id": "urn:datagraphs:validation:enumeration",
         "value": enums
       }]
+
+  def _is_valid_inverse_of(self, class_name: str, inverse_of: str, datatype: Union[DATATYPE, str]) -> bool:
+    is_valid = False
+    if datatype not in DATATYPE:
+      class_def = self.find_class(datatype)
+      if class_def is not None:
+        prop_def = self.find_property(class_def["objectProperties"], inverse_of)
+        if prop_def is None:
+          raise InvalidInversePropertyError(f"Inverse property '{inverse_of}' not found in class '{datatype}'")
+        elif "range" not in prop_def["propertyDatatype"]:
+          raise InvalidInversePropertyError(f"Inverse property '{inverse_of}' in class '{datatype}' has no range defined, expected '{class_name}'")
+        elif prop_def["propertyDatatype"]["range"] != class_name:
+          raise InvalidInversePropertyError(f"Inverse property '{inverse_of}' in class '{datatype}' does not point back to class '{class_name}'")
+        else:
+          is_valid = True
+      else:
+        raise InvalidInversePropertyError(f"Inverse property refers to non-existent class '{datatype}'")
+    else:
+      raise InvalidInversePropertyError(f"Inverse property can only be set for properties with concept datatype, not '{datatype}'")
+    return is_valid
 
   def _insert_datatype(self, prop_def: dict, datatype: DATATYPE, is_nested: bool, is_lang_string: bool) -> dict:
     property_datatype = prop_def["propertyDatatype"]
@@ -304,18 +326,18 @@ class Schema:
       prop_def["isNestedObject"] = is_nested
     return property_datatype
 
-  def update_prop(self, class_name: str, prop_name: str, datatype, description: str, is_array: bool = False, is_nested: bool = False, is_lang_string: bool = True) -> None:
-    self.delete_prop(class_name, prop_name)
-    self.create_prop(class_name, prop_name, datatype, description, is_array, is_nested, is_lang_string)
+  def update_property(self, class_name: str, prop_name: str, datatype, description: str, is_array: bool = False, is_nested: bool = False, is_lang_string: bool = True) -> None:
+    self.delete_property(class_name, prop_name)
+    self.create_property(class_name, prop_name, datatype, description, is_array, is_nested, is_lang_string)
 
-  def rename_prop(self, class_name: str, old_prop_name: str, new_prop_name: str) -> None:
+  def rename_property(self, class_name: str, old_prop_name: str, new_prop_name: str) -> None:
     class_def = self.find_class(class_name)
     if class_def is None:
       raise ClassNotFoundError(f"Class '{class_name}' not found")
-    prop_def = self.find_prop(class_def["objectProperties"], old_prop_name)
+    prop_def = self.find_property(class_def["objectProperties"], old_prop_name)
     if prop_def is None:
       raise PropertyNotFoundError(f"Property '{old_prop_name}' not found in class '{class_name}'")
-    conflict_prop_def = self.find_prop(class_def["objectProperties"], new_prop_name)
+    conflict_prop_def = self.find_property(class_def["objectProperties"], new_prop_name)
     if conflict_prop_def is not None:
       raise PropertyExistsError(f"The new property name '{new_prop_name}' is already in use")
     prop_def["propertyName"] = new_prop_name
@@ -326,7 +348,7 @@ class Schema:
     class_def = self.find_class(class_name)
     if class_def is None:
       raise ClassNotFoundError(f"Class '{class_name}' not found")
-    prop_def = self.find_prop(class_def["objectProperties"], prop_name)
+    prop_def = self.find_property(class_def["objectProperties"], prop_name)
     if prop_def is None:
       raise PropertyNotFoundError(f"Property '{prop_name}' not found in class '{class_name}'")
     prop_def['propertyDescription'] = description
@@ -335,7 +357,7 @@ class Schema:
     class_def = self.find_class(class_name)
     if class_def is None:
       raise ClassNotFoundError(f"Class '{class_name}' not found")
-    prop_def = self.find_prop(class_def["objectProperties"], prop_name)
+    prop_def = self.find_property(class_def["objectProperties"], prop_name)
     if prop_def is None:
       raise PropertyNotFoundError(f"Property '{prop_name}' not found in class '{class_name}'")
     prop_def["isArray"] = is_array
@@ -344,16 +366,16 @@ class Schema:
     class_def = self.find_class(class_name)
     if class_def is None:
       raise ClassNotFoundError(f"Class '{class_name}' not found")
-    prop_def = self.find_prop(class_def["objectProperties"], prop_name)
+    prop_def = self.find_property(class_def["objectProperties"], prop_name)
     if prop_def is None:
       raise PropertyNotFoundError(f"Property '{prop_name}' not found in class '{class_name}'")
     prop_def["isFilterable"] = is_filterable
 
-  def delete_prop(self, class_name: str, prop_name: str) -> None:
+  def delete_property(self, class_name: str, prop_name: str) -> None:
     class_def = self.find_class(class_name)
     if class_def is None:
       raise ClassNotFoundError(f"Class '{class_name}' not found")
-    prop_def = self.find_prop(class_def["objectProperties"], prop_name)
+    prop_def = self.find_property(class_def["objectProperties"], prop_name)
     if prop_def is None:
       raise PropertyNotFoundError(f"Property '{prop_name}' not found in class '{class_name}'")
     class_def["objectProperties"].remove(prop_def)
@@ -364,14 +386,14 @@ class Schema:
   def find_subclasses(self, baseclass: str) -> list[dict]:
     return [x for x in self._schema["classes"] if x.get('parentClass') == baseclass]
 
-  def find_prop(self, props: list, name: str) -> Optional[dict]:
+  def find_property(self, props: list, name: str) -> Optional[dict]:
     return next((x for x in props if x['propertyName'] == name), None)
 
   def assign_property_orders(self, property_orders: dict) -> None:
     for class_def in self._schema['classes']:
       if class_def['label'] in property_orders:
         for i, pname in enumerate(property_orders[class_def['label']]):
-          prop = self.find_prop(class_def['objectProperties'], pname)
+          prop = self.find_property(class_def['objectProperties'], pname)
           if prop:
             prop['propertyOrder'] = i
         class_def['objectProperties'] = sorted(class_def['objectProperties'], key=lambda p: p['propertyOrder'])

@@ -1,6 +1,6 @@
-from enum import Enum
+from enum import StrEnum
 
-class DATATYPE(Enum):
+class DATATYPE(StrEnum):
     TEXT = 'text'
     DATE = 'date'
     DATETIME = 'datetime'
@@ -12,5 +12,3 @@ class DATATYPE(Enum):
     IMAGE_URL = 'imageUrl'
     ENUM = 'enum'
 
-    def __str__(self):
-        return str(self.value)

@@ -1,7 +1,6 @@
-import json
 import pytest
 from datagraphs.schema import Schema as DatagraphsSchema
-from datagraphs.schema import SchemaError, ClassNotFoundError, PropertyExistsError, PropertyNotFoundError
+from datagraphs.schema import PropertyExistsError, InvalidInversePropertyError, SchemaError, ClassNotFoundError, PropertyNotFoundError
 from datagraphs.datatypes import DATATYPE
 
 class TestSchemaInitialization:
@@ -45,11 +44,16 @@ class TestSchemaInitialization:
         with pytest.raises(SchemaError):
             DatagraphsSchema(invalid_data)
 
+    def test_should_generate_correct_name_with_version(self):
+        schema = DatagraphsSchema(name="Custom Model", version="2.0")
+        dict_schema = schema.to_dict()
+        assert dict_schema["name"] == "Custom Model v2.0"
+
 class TestSchemaClassFunctions:
     def setup_method(self):
         self.schema = DatagraphsSchema()
         self.schema.create_class("TestClass")
-        self.schema.create_prop("TestClass", "prop1", DATATYPE.TEXT)
+        self.schema.create_property("TestClass", "prop1", DATATYPE.TEXT)
 
     def test_should_find_existing_class_by_name(self):
         cls = self.schema.find_class("TestClass")
@@ -129,7 +133,7 @@ class TestSchemaClassFunctions:
 
     def test_should_delete_property_references_when_class_is_deleted(self):
         self.schema.create_class("AnotherClass")
-        self.schema.create_prop("AnotherClass", "refProp", "TestClass")
+        self.schema.create_property("AnotherClass", "refProp", "TestClass")
         self.schema.delete_class("TestClass", include_linked_props=True)
         another_cls = self.schema.find_class("AnotherClass")
         assert len(another_cls["objectProperties"]) == 1
@@ -137,8 +141,8 @@ class TestSchemaClassFunctions:
     def test_should_assign_new_label_property(self):
         cls = self.schema.find_class("TestClass")
         assert cls["labelProperty"] == "label"
-        self.schema.create_prop("TestClass", "newLabelProp", DATATYPE.TEXT)
-        self.schema.assign_label_prop("TestClass", prop_name="newLabelProp")
+        self.schema.create_property("TestClass", "newLabelProp", DATATYPE.TEXT)
+        self.schema.assign_label_property("TestClass", prop_name="newLabelProp")
         cls = self.schema.find_class("TestClass")
         assert cls["labelProperty"] == "newLabelProp"
 
@@ -154,18 +158,258 @@ class TestSchemaClassFunctions:
         cls = self.schema.find_class("TestClass")
         assert cls["description"] == "New description"
 
+    def test_should_raise_error_when_creating_subclass_with_nonexistent_parent(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.create_subclass("SubClass", "description", "NonExistent")
+
+    def test_should_raise_error_when_updating_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.update_class("NonExistent", new_name="NewName")
+
+    def test_should_raise_error_when_deleting_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.delete_class("NonExistent")
+
+    def test_should_raise_error_when_assigning_label_prop_to_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.assign_label_property("NonExistent", "prop1")
+
+    def test_should_raise_error_when_assigning_label_prop_with_nonexistent_property(self):
+        with pytest.raises(PropertyNotFoundError):
+            self.schema.assign_label_property("TestClass", "nonExistentProp")
+
+    def test_should_raise_error_when_assigning_label_autogen_to_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.assign_label_autogen("NonExistent", "pattern")
+
+    def test_should_raise_error_when_label_autogen_label_property_missing(self):
+        self.schema.delete_property("TestClass", "label")
+        with pytest.raises(PropertyNotFoundError):
+            self.schema.assign_label_autogen("TestClass", "pattern")
+
+    def test_should_raise_error_when_assigning_baseclass_to_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.assign_baseclass("NonExistent", "TestClass")
+
+    def test_should_raise_error_when_assigning_description_to_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.assign_class_description("NonExistent", "description")
+
 class TestSchemaPropertyFunctions:
     def setup_method(self):
         self.schema = DatagraphsSchema()
         self.schema.create_class("TestClass")
 
     def test_should_create_property_in_class(self):
-        self.schema.create_prop("TestClass", "newProp", DATATYPE.INTEGER, description="An integer property")
+        self.schema.create_property("TestClass", "newProp", DATATYPE.INTEGER)
         cls = self.schema.find_class("TestClass")
         prop = next((p for p in cls["objectProperties"] if p["propertyName"] == "newProp"), None)
         assert prop is not None
 
+    def test_should_create_cascading_properties_in_subclass(self):
+        self.schema.create_subclass("SubClass", "description", "TestClass")
+        self.schema.create_cascading_property("TestClass", "newProp", DATATYPE.INTEGER)
+        cls = self.schema.find_class("SubClass")
+        prop = next((p for p in cls["objectProperties"] if p["propertyName"] == "newProp"), None)
+        assert prop is not None
+
     def test_should_raise_error_on_duplicate_property(self):
-        self.schema.create_prop("TestClass", "dupProp", DATATYPE.TEXT)
+        self.schema.create_property("TestClass", "dupProp", DATATYPE.TEXT)
         with pytest.raises(PropertyExistsError):
-            self.schema.create_prop("TestClass", "dupProp", DATATYPE.TEXT)
+            self.schema.create_property("TestClass", "dupProp", DATATYPE.TEXT)
+
+    def test_should_create_property_with_specified_description(self):
+        desc = "A test property"
+        self.schema.create_property("TestClass", "newProp", DATATYPE.INTEGER, description=desc)
+        cls = self.schema.find_class("TestClass")
+        prop = next((p for p in cls["objectProperties"] if p["propertyName"] == "newProp"), None)
+        assert prop["propertyDescription"] == desc
+
+    def test_should_create_property_with_specified_datatype(self):
+        self.schema.create_property("TestClass", "newProp", DATATYPE.INTEGER)
+        cls = self.schema.find_class("TestClass")
+        prop = next((p for p in cls["objectProperties"] if p["propertyName"] == "newProp"), None)
+        assert prop["propertyDatatype"]["id"] == "urn:datagraphs:datatypes:integer"
+        assert prop["propertyDatatype"]["label"] == "integer"
+
+    def test_should_create_text_property_with_multilanguage_support(self):
+        self.schema.create_property("TestClass", "newProp", DATATYPE.TEXT, is_lang_string=True)
+        cls = self.schema.find_class("TestClass")
+        prop = next((p for p in cls["objectProperties"] if p["propertyName"] == "newProp"), None)
+        assert prop["propertyDatatype"]["id"] == "urn:datagraphs:datatypes:text"
+        assert prop["propertyDatatype"]["label"] == "text"
+        assert prop["isLangString"] is True 
+
+    def test_should_create_array_property(self):
+        self.schema.create_property("TestClass", "newProp", DATATYPE.TEXT, is_array=True)
+        cls = self.schema.find_class("TestClass")
+        prop = next((p for p in cls["objectProperties"] if p["propertyName"] == "newProp"), None)
+        assert prop["isArray"] is True
+
+    def test_should_create_nested_property(self):
+        self.schema.create_property("TestClass", "newProp", DATATYPE.TEXT, is_nested=True)
+        cls = self.schema.find_class("TestClass")
+        prop = next((p for p in cls["objectProperties"] if p["propertyName"] == "newProp"), None)
+        assert prop["isNestedObject"] is True
+
+    def test_should_create_an_inverse_property(self):
+        self.schema.create_class("AnotherClass")
+        self.schema.create_property("AnotherClass", "prop", "TestClass")
+        self.schema.create_property("TestClass", "newProp", "AnotherClass", inverse_of="prop")
+        cls = self.schema.find_class("TestClass")
+        prop = next((p for p in cls["objectProperties"] if p["propertyName"] == "newProp"), None)
+        assert prop["inverseOf"] == "prop"
+
+    def test_should_not_allow_inverse_property_on_a_datatype_property(self):
+        self.schema.create_class("AnotherClass")
+        self.schema.create_property("AnotherClass", "prop", DATATYPE.TEXT)
+        with pytest.raises(InvalidInversePropertyError):
+            self.schema.create_property("TestClass", "newProp", DATATYPE.TEXT, inverse_of="prop")
+
+    def test_should_not_allow_inverse_property_if_property_does_not_exist_on_target(self):
+        self.schema.create_class("AnotherClass")
+        self.schema.create_property("AnotherClass", "prop", DATATYPE.TEXT)
+        with pytest.raises(InvalidInversePropertyError):
+            self.schema.create_property("TestClass", "newProp", "AnotherClass", inverse_of="propNonExistent")
+
+    def test_should_not_allow_inverse_property_if_range_type_mismatch(self):
+        self.schema.create_class("AnotherClass")
+        self.schema.create_property("AnotherClass", "prop", DATATYPE.TEXT)
+        with pytest.raises(InvalidInversePropertyError):
+            self.schema.create_property("TestClass", "newProp", "AnotherClass", inverse_of="prop")
+
+    def test_should_create_enum_property(self):
+        enums = ["Option1", "Option2", "Option3"]
+        self.schema.create_property("TestClass", "enumProp", DATATYPE.ENUM, enums=enums)
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "enumProp")
+        assert prop["propertyDatatype"]["id"] == "urn:datagraphs:datatypes:enum"
+        assert prop["propertyDatatype"]["label"] == "enum"
+        assert prop["validationRules"][0]["value"] == enums
+
+    def test_should_update_property(self):
+        self.schema.create_property("TestClass", "propToUpdate", DATATYPE.INTEGER, description="Old description")
+        self.schema.update_property("TestClass", "propToUpdate", description="New description", datatype=DATATYPE.TEXT, is_lang_string=True)
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "propToUpdate")
+        assert prop["propertyDescription"] == "New description"
+        assert prop["propertyDatatype"]["id"] == "urn:datagraphs:datatypes:text"
+        assert prop["isLangString"] is True
+
+    def test_should_rename_property(self):
+        self.schema.create_property("TestClass", "propToRename", DATATYPE.INTEGER)
+        self.schema.rename_property("TestClass", "propToRename", "renamedProp")
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "renamedProp")
+        assert prop is not None
+        assert self.schema.find_property(cls["objectProperties"], "propToRename") is None
+
+    def test_should_assign_property_description(self):
+        self.schema.create_property("TestClass", "propToDescribe", DATATYPE.INTEGER)
+        self.schema.assign_prop_description("TestClass", "propToDescribe", "This is a description")
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "propToDescribe")
+        assert prop["propertyDescription"] == "This is a description"
+
+    def test_should_change_property_cardinality(self):
+        self.schema.create_property("TestClass", "propToChangeCardinality", DATATYPE.INTEGER)
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "propToChangeCardinality")
+        assert prop["isArray"] is False 
+        self.schema.change_prop_cardinality("TestClass", "propToChangeCardinality", is_array=True)
+        prop = self.schema.find_property(cls["objectProperties"], "propToChangeCardinality")
+        assert prop["isArray"] is True
+
+    def test_should_set_property_filterability(self):
+        self.schema.create_property("TestClass", "propToFilter", DATATYPE.INTEGER)
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "propToFilter")
+        assert "isFilterable" not in prop or prop["isFilterable"] is False 
+        self.schema.set_prop_filterability("TestClass", "propToFilter", is_filterable=True)
+        prop = self.schema.find_property(cls["objectProperties"], "propToFilter")
+        assert prop["isFilterable"] is True
+
+    def test_should_delete_property_from_class(self):
+        self.schema.create_property("TestClass", "propToDelete", DATATYPE.INTEGER)
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "propToDelete")
+        assert prop is not None
+        self.schema.delete_property("TestClass", "propToDelete")
+        prop = self.schema.find_property(cls["objectProperties"], "propToDelete")
+        assert prop is None
+
+    def test_should_assign_property_orders(self):
+        self.schema.create_property("TestClass", "firstProp", DATATYPE.INTEGER)
+        self.schema.create_property("TestClass", "secondProp", DATATYPE.INTEGER)
+        self.schema.create_property("TestClass", "thirdProp", DATATYPE.INTEGER)
+        cls = self.schema.find_class("TestClass")
+        prop_names = [p["propertyName"] for p in cls["objectProperties"]]
+        assert prop_names == ["label", "firstProp", "secondProp", "thirdProp"]
+        self.schema.assign_property_orders({"TestClass": ["label", "secondProp", "thirdProp", "firstProp"]})
+        cls = self.schema.find_class("TestClass")
+        prop_names = [p["propertyName"] for p in cls["objectProperties"]]
+        prop_orders = [p["propertyOrder"] for p in cls["objectProperties"]]
+        assert prop_names == ["label", "secondProp", "thirdProp", "firstProp"]
+        assert prop_orders == [0, 1, 2, 3]
+
+    def test_should_assign_default_property_orders_if_not_specified(self):
+        self.schema.create_property("TestClass", "firstProp", DATATYPE.INTEGER)
+        self.schema.create_property("TestClass", "secondProp", DATATYPE.INTEGER)
+        self.schema.create_property("TestClass", "thirdProp", DATATYPE.INTEGER)
+        cls = self.schema.find_class("TestClass")
+        prop_names = [p["propertyName"] for p in cls["objectProperties"]]
+        prop_orders = [p["propertyOrder"] for p in cls["objectProperties"]]
+        assert prop_names == ["label", "firstProp", "secondProp", "thirdProp"]
+        assert prop_orders == [0, 1, 2, 3]
+
+    def test_should_perform_deep_copy_when_performing_clone_schema(self):
+        self.schema.create_property("TestClass", "prop1", DATATYPE.TEXT)
+        cloned_schema = self.schema.clone()
+        assert cloned_schema.find_class("TestClass")["description"] is not None
+        cloned_schema.update_class("TestClass", new_description="Updated description")
+        assert self.schema.find_class("TestClass")["description"] == ""
+        assert cloned_schema.find_class("TestClass")["description"] == "Updated description"
+
+    def test_should_raise_error_when_creating_prop_on_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.create_property("NonExistent", "prop", DATATYPE.TEXT)
+
+    def test_should_raise_error_when_renaming_prop_on_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.rename_property("NonExistent", "oldProp", "newProp")
+
+    def test_should_raise_error_when_renaming_nonexistent_prop(self):
+        with pytest.raises(PropertyNotFoundError):
+            self.schema.rename_property("TestClass", "nonExistentProp", "newProp")
+
+    def test_should_raise_error_when_assigning_description_to_prop_on_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.assign_prop_description("NonExistent", "prop", "desc")
+
+    def test_should_raise_error_when_assigning_description_to_nonexistent_prop(self):
+        with pytest.raises(PropertyNotFoundError):
+            self.schema.assign_prop_description("TestClass", "nonExistentProp", "desc")
+
+    def test_should_raise_error_when_changing_cardinality_on_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.change_prop_cardinality("NonExistent", "prop")
+
+    def test_should_raise_error_when_changing_cardinality_on_nonexistent_prop(self):
+        with pytest.raises(PropertyNotFoundError):
+            self.schema.change_prop_cardinality("TestClass", "nonExistentProp")
+
+    def test_should_raise_error_when_setting_filterability_on_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.set_prop_filterability("NonExistent", "prop", True)
+
+    def test_should_raise_error_when_setting_filterability_on_nonexistent_prop(self):
+        with pytest.raises(PropertyNotFoundError):
+            self.schema.set_prop_filterability("TestClass", "nonExistentProp", True)
+
+    def test_should_raise_error_when_deleting_prop_on_nonexistent_class(self):
+        with pytest.raises(ClassNotFoundError):
+            self.schema.delete_property("NonExistent", "prop")
+
+    def test_should_raise_error_when_deleting_nonexistent_prop(self):
+        with pytest.raises(PropertyNotFoundError):
+            self.schema.delete_property("TestClass", "nonExistentProp")

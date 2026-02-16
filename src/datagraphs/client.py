@@ -1,4 +1,3 @@
-from wsgiref import headers
 import requests
 import json
 import urllib.parse
@@ -7,6 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, List, Any, Union
 from datagraphs.schema import Schema as DatagraphsSchema
+from datagraphs.dataset import Dataset
 
 class HTTP(Enum):
     GET = 'get'
@@ -18,15 +18,12 @@ class HTTP(Enum):
         return str(self.value)
 
 class DatagraphsError(Exception):
-    """Base exception for Datagraphs client errors."""
     pass
 
 class AuthenticationError(DatagraphsError):
-    """Raised when authentication fails."""
     pass
 
 class Client:
-    """Client for interacting with the Datagraphs API."""
 
     PROD_URL = "https://api.datagraphs.io/"
     AUTH_URL_SUFFIX = "oauth/token"
@@ -168,29 +165,24 @@ class Client:
     def _cache_buster(self) -> str:
         return f't={datetime.timestamp(datetime.now())}'
 
+    def status(self) -> str:
+        url = f'{self._service_url}status?{self._cache_buster()}'
+        try:
+            response = self._request(HTTP.GET, url, headers=self._get_headers())
+            return response.get('api', 'unknown')
+        except DatagraphsError as e:
+            raise DatagraphsError(f"Failed to fetch status: {e}")
+
     def get(self, type_name: str, lang: str = 'all', include_date_fields: bool = False) -> List[Dict[str, Any]]:
-        """
-        Fetch all entities of a given type.
-        
-        Args:
-            type_name: Type of entities to fetch
-            lang: Language code
-            include_date_fields: Whether to include date fields
-            
-        Returns:
-            List of entity dictionaries
-        """
         page_no = 1
         resp = self._request(
             HTTP.GET, 
             self._get_data_url(type_name, page_no, self._batch_size, lang, include_date_fields), 
             headers=self._get_headers(lang)
         )
-        
         if 'search' in resp:
             total_results = resp['search']['totalResults']
             data = resp['results'] if total_results > 0 else []
-            
             while page_no * self._batch_size < total_results:
                 page_no += 1
                 resp = self._request(
@@ -308,13 +300,6 @@ class Client:
         return []
 
     def put(self, dataset: str, data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> None:
-        """
-        Upload entities to a dataset.
-        
-        Args:
-            dataset: Target dataset name
-            data: Single entity dict or list of entity dicts
-        """
         entities = [data] if isinstance(data, dict) else data
         length = len(entities)
         print(f'Loading {length} entities into dataset {dataset} in repo: {self.project_name}')
@@ -328,37 +313,13 @@ class Client:
             self._request(HTTP.PUT, f'{self.base_url}{dataset}', json=entities, headers=self._get_headers())
 
     def delete(self, type_name: str, id: str) -> None:
-        """
-        Delete an entity by type and ID.
-        
-        Args:
-            type_name: Type of the entity
-            id: ID of the entity
-        """
         url = f'{self.base_url}{type_name}/{id}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
     def _is_valid_urn(self, urn: str) -> bool:
-        """
-        Check if a string is a valid URN.
-        
-        Args:
-            urn: URN string 
-        Returns:
-            True if valid URN, False otherwise
-        """
         return self.URN_PATTERN.match(urn) is not None
 
     def get_type_from_urn(self, urn: str) -> str:
-        """
-        Extract type name from a URN.
-    
-        Args:
-            urn: URN string
-            
-        Returns:
-            Type name
-        """
         if not self._is_valid_urn(urn):
             raise ValueError(f'Invalid URN: {urn}') 
         second_colon = urn.index(':', urn.index(':') + 1)
@@ -366,15 +327,6 @@ class Client:
         return urn[second_colon + 1:last_colon]
 
     def get_id_from_urn(self, urn: str) -> str:
-        """
-        Extract ID from a URN.
-        
-        Args:
-            urn: URN string
-            
-        Returns:
-            ID portion of the URN
-        """
         if not self._is_valid_urn(urn):
             raise ValueError(f'Invalid URN: {urn}') 
         return urn[urn.rfind(':') + 1:]
@@ -385,17 +337,6 @@ class Client:
         from_urn: str, 
         to_urn: str
     ) -> Union[Dict, List, str, Any]:
-        """
-        Recursively replace URN prefixes in an object.
-        
-        Args:
-            obj: Object to process (dict, list, or string)
-            from_urn: URN prefix to replace
-            to_urn: Replacement URN prefix
-            
-        Returns:
-            Object with URNs replaced
-        """
         if isinstance(obj, dict):
             return {key: self.map_project_name(value, from_urn, to_urn) for key, value in obj.items()}
         elif isinstance(obj, list):
@@ -405,44 +346,24 @@ class Client:
         return obj
 
     def apply_schema(self, schema: DatagraphsSchema) -> None:
-        """
-        Apply a schema to the project.
-        
-        Args:
-            schema: Schema object to apply
-        """
         url = f'{self.base_url}models/_active'
         self._request(HTTP.PUT, url, data=schema.to_json(), headers=self._get_headers())
 
     def get_schema(self) -> DatagraphsSchema:
-        """
-        Fetch the active schema for the project.
-        
-        Returns:
-            DatagraphsSchema object
-        """
         url = f'{self.base_url}models/_active?{self._cache_buster()}'
-        response = self._request(HTTP.GET, url, headers=self._get_headers())
+        response = self._request(HTTP.GET, url, headers=self._get_headers())        
         return DatagraphsSchema(response)
         
-    def get_datasets(self) -> List[Dict[str, Any]]:
-        """
-        Fetch all datasets in the project.
-        
-        Returns:
-            List of dataset dictionaries
-        """
+    def get_datasets(self) -> List[Dataset]:
+        datasets = []
         url = f'{self.base_url}?pageSize=1000&{self._cache_buster()}'
-        data = self._request(HTTP.GET, url, headers=self._get_headers())
-        return data.get("results", []) if data else []
+        resp = self._request(HTTP.GET, url, headers=self._get_headers())
+        data = resp.get("results", []) if resp else []
+        for item in data:
+            datasets.append(Dataset.create_from(item))
+        return datasets
 
-    def apply_datasets(self, datasets: List[Dict[str, Any]]) -> None:
-        """
-        Create or update multiple datasets.
-        
-        Args:
-            datasets: List of dataset dictionaries
-        """
+    def apply_datasets(self, datasets: List[Dataset]) -> None:
         target_datasets = self.get_datasets()
         for dataset in datasets:
             slug = self.get_dataset_slug(dataset)
@@ -452,33 +373,25 @@ class Client:
             else:
                 self._update_dataset(dataset)
 
-    def _create_dataset(self, dataset: Dict[str, Any]) -> None:
-        """Create a new dataset."""
+    def _create_dataset(self, dataset: Dataset) -> None:
         url = f'{self.base_url}datasets'
-        self._request(HTTP.POST, url, json=dataset, headers=self._get_headers())
+        self._request(HTTP.POST, url, json=dataset.to_dict(), headers=self._get_headers())
 
-    def _update_dataset(self, dataset: Dict[str, Any]) -> None:
-        """Update an existing dataset."""
+    def _update_dataset(self, dataset: Dataset) -> None:
         slug = self.get_dataset_slug(dataset)
         url = f'{self.base_url}datasets/{slug}'
-        self._request(HTTP.PUT, url, json=dataset, headers=self._get_headers())
+        self._request(HTTP.PUT, url, json=dataset.to_dict(), headers=self._get_headers())
 
-    def get_dataset_slug(self, dataset: Dict[str, Any]) -> str:
-        """
-        Extract slug from dataset ID.
-        
-        Args:
-            dataset: Dataset dictionary
-            
-        Returns:
-            Dataset slug
-        """
-        return dataset['id'][dataset['id'].rfind(':') + 1:]
+    def clear_dataset(self, slug: str) -> None:
+        url = f'{self.base_url}{slug}?filter=_all'
+        self._request(HTTP.DELETE, url, headers=self._get_headers())
 
-    def clear_down(self) -> None:
-        """Delete all data from all datasets in the project."""
+    def get_dataset_slug(self, dataset: Dataset) -> str:
+        return dataset.id[dataset.id.rfind(':') + 1:]
+
+    def tear_down(self) -> None:
         datasets = self.get_datasets()
         for dataset in datasets:
             slug = self.get_dataset_slug(dataset)
-            url = f'{self.base_url}{slug}?filter=_all'
+            url = f'{self.base_url}datasets/{slug}'
             self._request(HTTP.DELETE, url, headers=self._get_headers())

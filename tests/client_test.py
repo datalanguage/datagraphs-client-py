@@ -2,6 +2,7 @@ import json
 import pytest
 from datagraphs.client import Client as DatagraphsClient, AuthenticationError, DatagraphsError
 from datagraphs.schema import Schema as DatagraphsSchema
+from datagraphs.dataset import Dataset
 
 TOKEN_TYPE = 'Bearer'
 ACCESS_TOKEN = 'test_token'
@@ -109,6 +110,11 @@ class TestDataRetrieval:
     def setup(self, get_client):
         self.client = get_client()
 
+    def test_should_check_service_status(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, {'api': 'OK'})
+        status = self.client.status()
+        assert status == 'OK'
+
     def test_should_get_data_for_specified_type_name_from_correct_endpoint(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
         self.client.get('Test')
@@ -164,7 +170,7 @@ class TestPagination:
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
         self.client.get('Test')
         args, kwargs = self.client._http_client.request.call_args
-        assert f'&pageSize=2' in args[1]
+        assert '&pageSize=2' in args[1]
 
     def test_should_batch_get_requests_if_initial_result_count_is_greater_than_batch_size(self, mocker):
         data = get_search_response(['a', 'b', 'c'])
@@ -203,7 +209,7 @@ class TestQuery:
         self.client = get_client()
 
     def test_should_support_query_by_dataset(self, mocker):
-        self.client._http_client.request.return_value = create_response_mock(mocker, 200)
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response(['a', 'b']))
         self.client.query(dataset='test-dataset')
         args, kwargs = self.client._http_client.request.call_args
         assert args[1].startswith('https://api.datagraphs.io/test_project/test-dataset?')
@@ -375,14 +381,14 @@ class TestSchemaOperations:
 
     def test_should_get_schema_for_project(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, None)
-        schema = self.client.get_schema()
+        self.client.get_schema()
         args, kwargs = self.client._http_client.request.call_args
         assert args[1].startswith("https://api.datagraphs.io/test_project/models/_active?")
 
     def test_should_apply_schema_to_project(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
         schema_data = {
-            "id": f"urn:models:123",
+            "id": "urn:models:123",
             "guid": "123",
             "type": "DomainModel",
             "name": "Domain Model",
@@ -406,16 +412,17 @@ class TestDatasetOperations:
         self.client = get_client('test_client_id', 'test_client_secret')
 
     def test_should_list_datasets_in_project(self, mocker):
-        self.client._http_client.request.return_value = create_response_mock(mocker, 200, {'results': ['ds1', 'ds2']})
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': 'ds1'}, {'name': 'ds2'}]))
         datasets = self.client.get_datasets()
         args, kwargs = self.client._http_client.request.call_args
         assert args[1].startswith("https://api.datagraphs.io/test_project/?")
-        assert datasets == ['ds1', 'ds2']
+        assert datasets[0].name == 'ds1'
+        assert datasets[1].name == 'ds2'
 
     def test_should_create_datasets_when_applying_new_datasets(self, mocker):
         existing_datasets = []
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response(existing_datasets))
-        datasets = [{'id': 'urn:ds:1'}, {'id': 'urn:ds:2'}]
+        datasets = [Dataset(name='1', project='ds'), Dataset(name='2', project='ds')]
         self.client.apply_datasets(datasets)
         args, kwargs = self.client._http_client.request.call_args_list[1]
         assert args[0] == "post"
@@ -427,8 +434,8 @@ class TestDatasetOperations:
         assert kwargs['json']['id'] == 'urn:ds:2'
 
     def test_should_update_datasets_when_applying_existing_datasets(self, mocker):
-        datasets = [{'id': 'urn:ds:1'}, {'id': 'urn:ds:2'}]
-        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response(datasets))
+        datasets = [Dataset(name='1', project='ds'), Dataset(name='2', project='ds')]
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
         self.client.apply_datasets(datasets)
         args, kwargs = self.client._http_client.request.call_args_list[1]
         assert args[0] == "put"
@@ -439,14 +446,20 @@ class TestDatasetOperations:
         assert args[1].startswith("https://api.datagraphs.io/test_project/datasets/2")
         assert kwargs['json']['id'] == 'urn:ds:2'
 
-    def test_should_delete_existing_datasets_during_cleardown(self, mocker):
-        datasets = [{'id': 'urn:ds:1'}, {'id': 'urn:ds:2'}]
-        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response(datasets))
-        self.client.clear_down()
-        args, kwargs = self.client._http_client.request.call_args_list[1]
+    def test_should_delete_data_from_dataset(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
+        self.client.clear_dataset('1')
+        args, kwargs = self.client._http_client.request.call_args_list[0]
         assert args[0] == "delete"
         assert args[1] == "https://api.datagraphs.io/test_project/1?filter=_all"
+
+    def test_should_delete_existing_datasets_during_teardown(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
+        self.client.tear_down()
+        args, kwargs = self.client._http_client.request.call_args_list[1]
+        assert args[0] == "delete"
+        assert args[1] == "https://api.datagraphs.io/test_project/datasets/1"
         args, kwargs = self.client._http_client.request.call_args_list[2]
         assert args[0] == "delete"
-        assert args[1] == "https://api.datagraphs.io/test_project/2?filter=_all"
+        assert args[1] == "https://api.datagraphs.io/test_project/datasets/2"
 

@@ -22,5 +22,6 @@ pythonpath = [
 ]
 addopts = "-ra -q"
 testpaths = [
-    "tests"
+    "tests",
+    "tests_integration"
 ]
