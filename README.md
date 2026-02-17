@@ -12,5 +12,6 @@ Install uv as per https://docs.astral.sh/uv/getting-started/installation/, then:
 1. Merge create cascading property
 1. Add load() and dump() to client
 1. Improve property order handling
+1. Add more integration tests
 1. Migrate to new schema structure
 
