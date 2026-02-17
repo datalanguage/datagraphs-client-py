@@ -250,7 +250,8 @@ class Schema:
       is_nested: bool = False,
       is_lang_string: bool = True,
       inverse_of: str = "",
-      enums: Optional[list] = None
+      enums: Optional[list] = None,
+      apply_to_subclasses: bool = False
     ) -> None:
     if enums is None:
       enums = []
