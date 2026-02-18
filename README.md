@@ -9,8 +9,8 @@ Install uv as per https://docs.astral.sh/uv/getting-started/installation/, then:
 * To lint the codebase: `uvx ruff check .`
 
 ## TODO
-1. Clean up property handling schema interface
-1. Merge create cascading property
+1. Clean up property handling schema interface - done
+1. Merge create cascading property - done
 1. Add load() and dump() to client
 1. Improve property order handling
 1. Add more integration tests

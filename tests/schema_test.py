@@ -196,6 +196,8 @@ class TestSchemaClassFunctions:
             self.schema.assign_class_description("NonExistent", "description")
 
 class TestSchemaPropertyFunctions:
+
+    @pytest.fixture(scope="function",autouse=True)
     def setup_method(self):
         self.schema = DatagraphsSchema()
         self.schema.create_class("TestClass")
@@ -331,6 +333,48 @@ class TestSchemaPropertyFunctions:
         prop = self.schema.find_property(cls["objectProperties"], "propToFilter")
         assert prop["isFilterable"] is True
 
+    def test_should_set_property_as_required(self):
+        self.schema.create_property("TestClass", "propToRequire", DATATYPE.INTEGER)
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "propToRequire")
+        assert prop["isOptional"] is True 
+        self.schema.update_property("TestClass", "propToRequire", is_optional=False)
+        prop = self.schema.find_property(cls["objectProperties"], "propToRequire")
+        assert prop["isOptional"] is False
+
+    def test_should_update_property_datatype(self):
+        self.schema.create_property("TestClass", "propToUpdate", DATATYPE.INTEGER)
+        self.schema.update_property("TestClass", "propToUpdate", datatype=DATATYPE.TEXT)
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "propToUpdate")
+        assert prop["propertyDatatype"]["id"] == "urn:datagraphs:datatypes:text"
+
+    def test_should_update_property_to_enum(self):
+        self.schema.create_property("TestClass", "propToEnum", DATATYPE.INTEGER)
+        enums = ["OptionA", "OptionB"]
+        self.schema.update_property("TestClass", "propToEnum", datatype=DATATYPE.ENUM, enums=enums)
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "propToEnum")
+        assert prop["propertyDatatype"]["id"] == "urn:datagraphs:datatypes:enum"
+        assert prop["validationRules"][0]["value"] == enums
+
+    def test_should_update_enum_property_options(self):
+        enums = ["Option1", "Option2", "Option3"]
+        self.schema.create_property("TestClass", "enumProp", DATATYPE.ENUM, enums=enums)
+        new_enums = ["OptionA", "OptionB"]
+        self.schema.update_property("TestClass", "enumProp", enums=new_enums)
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["objectProperties"], "enumProp")
+        assert prop["validationRules"][0]["value"] == new_enums
+
+    def test_should_update_property_across_subclasses(self):
+        self.schema.create_subclass("SubClass", "description", "TestClass")
+        self.schema.create_property("TestClass", "propToUpdate", DATATYPE.INTEGER, apply_to_subclasses=True)
+        self.schema.update_property("TestClass", "propToUpdate", datatype=DATATYPE.TEXT, apply_to_subclasses=True)
+        cls = self.schema.find_class("SubClass")
+        prop = self.schema.find_property(cls["objectProperties"], "propToUpdate")
+        assert prop["propertyDatatype"]["id"] == "urn:datagraphs:datatypes:text"
+
     def test_should_rename_property(self):
         self.schema.create_property("TestClass", "propToRename", DATATYPE.INTEGER)
         self.schema.rename_property("TestClass", "propToRename", "renamedProp")
@@ -366,6 +410,7 @@ class TestSchemaPropertyFunctions:
         self.schema.create_property("TestClass", "firstProp", DATATYPE.INTEGER)
         self.schema.create_property("TestClass", "secondProp", DATATYPE.INTEGER)
         self.schema.create_property("TestClass", "thirdProp", DATATYPE.INTEGER)
+        self.schema.assign_property_orders({})
         cls = self.schema.find_class("TestClass")
         prop_names = [p["propertyName"] for p in cls["objectProperties"]]
         prop_orders = [p["propertyOrder"] for p in cls["objectProperties"]]

@@ -1,8 +1,9 @@
 import uuid
 import json
 import datetime
-from datagraphs.datatypes import DATATYPE
 from typing import Optional, Self, Union
+from datagraphs.datatypes import DATATYPE
+from datagraphs.utils import *
 
 class SchemaError(Exception):
     """Base exception for Schema-related errors."""
@@ -376,7 +377,8 @@ class Schema:
     if inverse_of is not None:
       self._assign_inverse_of(prop_def, class_name, inverse_of, datatype)
     if enums is not None:
-      self._assign_enum(prop_def, datatype, enums)
+      existing_datatype = get_id_from_urn(prop_def["propertyDatatype"]["id"])
+      self._assign_enum(prop_def, existing_datatype, enums)
     if is_filterable is not None:
       self._assign_is_filterable(prop_def, is_filterable)
     if is_synonym is not None:

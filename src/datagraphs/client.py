@@ -1,12 +1,12 @@
 import requests
 import json
 import urllib.parse
-import re
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, List, Any, Union
 from datagraphs.schema import Schema as DatagraphsSchema
 from datagraphs.dataset import Dataset
+from datagraphs.utils import *
 
 class HTTP(Enum):
     GET = 'get'
@@ -40,15 +40,6 @@ class Client:
     HTTP_FORBIDDEN = 403
     HTTP_GATEWAY_TIMEOUT = 504
 
-    URN_PATTERN = re.compile(
-        r"^[Uu][Rr][Nn]:"                          # "urn:" prefix (case-insensitive)
-        r"(?![Uu][Rr][Nn]-)"                       # NID cannot start with "urn-"
-        r"[a-zA-Z0-9][a-zA-Z0-9-]{1,31}:"          # NID: 2-32 chars
-        r"(?:[a-zA-Z0-9()+,\-.:=@;$_!*']"          # NSS trans characters
-        r"|%[0-9A-Fa-f]{2})+"                      # or percent-encoded
-        r"$"
-    )
-
     def __init__(
         self, 
         project_name: str, 
@@ -80,7 +71,7 @@ class Client:
         self._http_client = requests
 
     @property
-    def base_url(self) -> str:
+    def _base_url(self) -> str:
         return f'{self._service_url}{self.project_name}/'
 
     def _get_auth_token(self, force_refresh=False) -> str:
@@ -155,7 +146,7 @@ class Client:
         include_date_fields: bool
     ) -> str:
         url = (
-            f'{self.base_url}_all?filter=type:{type_name}&lang={lang}'
+            f'{self._base_url}_all?filter=type:{type_name}&lang={lang}'
             f'&pageNo={page_no}&pageSize={page_size}&{self._cache_buster()}'
         )
         if include_date_fields:
@@ -213,7 +204,7 @@ class Client:
             next_page_token: str = '',
             include_date_fields: bool = False
         ) -> str:
-        url = f'{self.base_url}{dataset}?lang={lang}&{self._cache_buster()}'        
+        url = f'{self._base_url}{dataset}?lang={lang}&{self._cache_buster()}'        
         if q:
             url += f'&q={urllib.parse.quote_plus(q)}'
         if filters:
@@ -308,55 +299,27 @@ class Client:
                 batch = entities[i:i + self._batch_size]
                 end = min(i + self._batch_size, length)
                 print(f'   Loading batch {i}-{end} of {length} entities into dataset {dataset} in repo: {self.project_name}')
-                self._request(HTTP.PUT, f'{self.base_url}{dataset}', json=batch, headers=self._get_headers())
+                self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=batch, headers=self._get_headers())
         else:
-            self._request(HTTP.PUT, f'{self.base_url}{dataset}', json=entities, headers=self._get_headers())
+            self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=entities, headers=self._get_headers())
 
     def delete(self, type_name: str, id: str) -> None:
-        url = f'{self.base_url}{type_name}/{id}'
+        url = f'{self._base_url}{type_name}/{id}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
-    def _is_valid_urn(self, urn: str) -> bool:
-        return self.URN_PATTERN.match(urn) is not None
-
-    def get_type_from_urn(self, urn: str) -> str:
-        if not self._is_valid_urn(urn):
-            raise ValueError(f'Invalid URN: {urn}') 
-        second_colon = urn.index(':', urn.index(':') + 1)
-        last_colon = urn.rfind(':')
-        return urn[second_colon + 1:last_colon]
-
-    def get_id_from_urn(self, urn: str) -> str:
-        if not self._is_valid_urn(urn):
-            raise ValueError(f'Invalid URN: {urn}') 
-        return urn[urn.rfind(':') + 1:]
-
-    def map_project_name(
-        self, 
-        obj: Union[Dict, List, str, Any], 
-        from_urn: str, 
-        to_urn: str
-    ) -> Union[Dict, List, str, Any]:
-        if isinstance(obj, dict):
-            return {key: self.map_project_name(value, from_urn, to_urn) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [self.map_project_name(item, from_urn, to_urn) for item in obj]
-        elif isinstance(obj, str) and obj.startswith(from_urn):
-            return obj.replace(from_urn, to_urn)
-        return obj
 
     def apply_schema(self, schema: DatagraphsSchema) -> None:
-        url = f'{self.base_url}models/_active'
+        url = f'{self._base_url}models/_active'
         self._request(HTTP.PUT, url, data=schema.to_json(), headers=self._get_headers())
 
     def get_schema(self) -> DatagraphsSchema:
-        url = f'{self.base_url}models/_active?{self._cache_buster()}'
+        url = f'{self._base_url}models/_active?{self._cache_buster()}'
         response = self._request(HTTP.GET, url, headers=self._get_headers())        
         return DatagraphsSchema(response)
         
     def get_datasets(self) -> List[Dataset]:
         datasets = []
-        url = f'{self.base_url}?pageSize=1000&{self._cache_buster()}'
+        url = f'{self._base_url}?pageSize=1000&{self._cache_buster()}'
         resp = self._request(HTTP.GET, url, headers=self._get_headers())
         data = resp.get("results", []) if resp else []
         for item in data:
@@ -369,21 +332,21 @@ class Client:
             slug = self.get_dataset_slug(dataset)
             match = next((d for d in target_datasets if self.get_dataset_slug(d) == slug), None)
             if match is None:
-                self._create_dataset(dataset)
+                self.create_dataset(dataset)
             else:
-                self._update_dataset(dataset)
+                self.update_dataset(dataset)
 
-    def _create_dataset(self, dataset: Dataset) -> None:
-        url = f'{self.base_url}datasets'
+    def create_dataset(self, dataset: Dataset) -> None:
+        url = f'{self._base_url}datasets'
         self._request(HTTP.POST, url, json=dataset.to_dict(), headers=self._get_headers())
 
-    def _update_dataset(self, dataset: Dataset) -> None:
+    def update_dataset(self, dataset: Dataset) -> None:
         slug = self.get_dataset_slug(dataset)
-        url = f'{self.base_url}datasets/{slug}'
+        url = f'{self._base_url}datasets/{slug}'
         self._request(HTTP.PUT, url, json=dataset.to_dict(), headers=self._get_headers())
 
     def clear_dataset(self, slug: str) -> None:
-        url = f'{self.base_url}{slug}?filter=_all'
+        url = f'{self._base_url}{slug}?filter=_all'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
     def get_dataset_slug(self, dataset: Dataset) -> str:
@@ -393,5 +356,5 @@ class Client:
         datasets = self.get_datasets()
         for dataset in datasets:
             slug = self.get_dataset_slug(dataset)
-            url = f'{self.base_url}datasets/{slug}'
+            url = f'{self._base_url}datasets/{slug}'
             self._request(HTTP.DELETE, url, headers=self._get_headers())
