@@ -1,6 +1,6 @@
 # DataGraphs Python Client
 
-Install uv as per https://docs.astral.sh/uv/getting-started/installation/, then:
+Install uv as per https://docs.astral.sh/uv/getting-started/installation/ then:
 
 * To create your virtual env: `uv sync`
 * To run the units tests: `uv run pytest tests --capture=tee-sys -v`
