@@ -52,9 +52,9 @@ class Dataset:
 
   @property
   def id(self) -> str:
-    return f"urn:{self.project}:{self.sanitise_name(self.name)}"
+    return f"urn:{self.project}:{self._sanitise_name(self.name)}"
 
-  def sanitise_name(self, value:str) -> str:
+  def _sanitise_name(self, value:str) -> str:
     return value.lower().replace(" ", "-")
 
   def to_dict(self) -> dict:
