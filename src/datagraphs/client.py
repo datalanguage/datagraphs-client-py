@@ -222,7 +222,7 @@ class Client:
             url += f'&sort={sort}'
         if ids:
             url += f'&ids={ids}'
-        if page_no > -1:
+        if page_no > 0:
             url += f'&pageNo={page_no}'
         if page_size > -1:
             url += f'&pageSize={page_size}'
@@ -246,8 +246,8 @@ class Client:
             sort: str = '', 
             ids: str = '', 
             lang: str = 'all', 
-            page_no: int = 0,
-            page_size: int = 0,
+            page_no: int = -1,
+            page_size: int = -1,
             previous_page_token: str = '',
             next_page_token: str = '',
             include_date_fields: bool = False
@@ -276,7 +276,7 @@ class Client:
         Returns:
             List of results
         """
-        if page_size == 0:
+        if page_size == -1:
             page_size = self._batch_size
             
         url = self._get_query_url(
@@ -284,11 +284,14 @@ class Client:
             lang, page_no, page_size, previous_page_token, next_page_token, include_date_fields
         )
         resp = self._request(HTTP.GET, url, headers=self._get_headers(lang))
-        
+
         if resp and 'search' in resp:
             total_results = resp['search']['totalResults']
             return resp['results'] if total_results > 0 else []
-        return []
+        elif len(ids) > 0 and isinstance(resp, list):
+            return resp
+        else:
+            return []
 
     def put(self, dataset: str, data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> None:
         entities = [data] if isinstance(data, dict) else data
