@@ -1,12 +1,14 @@
+import logging
 import requests
 import json
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Dict, List, Any, Union
 from datagraphs.schema import Schema as DatagraphsSchema
 from datagraphs.dataset import Dataset
-from datagraphs.utils import *
+
+logger = logging.getLogger(__name__)
 
 class HTTP(Enum):
     GET = 'get'
@@ -39,6 +41,7 @@ class Client:
     HTTP_UNAUTHORIZED = 401
     HTTP_FORBIDDEN = 403
     HTTP_GATEWAY_TIMEOUT = 504
+    DEFAULT_DATASETS_PAGE_SIZE = 1000
 
     def __init__(
         self, 
@@ -61,12 +64,11 @@ class Client:
             service_url: Base URL for the API service
         """
         self.project_name = project_name
-        self.api_key = api_key
-        self.client_id = client_id
-        self.client_secret = client_secret
+        self._api_key = api_key
+        self._client_id = client_id
+        self._client_secret = client_secret
         self._batch_size = batch_size
         self._auth_token = ''
-        self._retry_count = 0
         self._service_url = service_url if service_url.endswith('/') else f'{service_url}/'
         self._http_client = requests
 
@@ -79,11 +81,11 @@ class Client:
             headers = {
                 'Content-Type': 'application/json', 
                 'Accept': 'application/json', 
-                'x-api-key': self.api_key
+                'x-api-key': self._api_key
             }
             body = { 
-                'clientId': self.client_id, 
-                'clientSecret': self.client_secret
+                'clientId': self._client_id, 
+                'clientSecret': self._client_secret
             }
             try:
                 response = self._http_client.post(
@@ -98,25 +100,38 @@ class Client:
                 raise AuthenticationError(f"Failed to obtain auth token: {e}")
         return self._auth_token
 
-    def _request(self, method: HTTP, url: str, **kwargs) -> Optional[Dict[str, Any]]:
+    def _request(self, method: HTTP, url: str, _retry_count: int = 0, **kwargs) -> Optional[Dict[str, Any]]:
+        """Execute an HTTP request with automatic auth retry.
+
+        Args:
+            method: The HTTP method to use.
+            url: The request URL.
+            _retry_count: Internal retry counter (do not set externally).
+            **kwargs: Additional arguments forwarded to the HTTP client.
+
+        Returns:
+            Parsed JSON response for GET requests, or ``None`` for mutating requests.
+
+        Raises:
+            AuthenticationError: If authentication fails after max retries.
+            DatagraphsError: If the request fails for any other reason.
+        """
         try:
             if 'headers' in kwargs and method in [HTTP.PUT, HTTP.POST]:
                 kwargs['headers']['Content-Type'] = 'application/json'            
             response = self._http_client.request(str(method), url, **kwargs)
             if response.status_code in [self.HTTP_OK, self.HTTP_CREATED, self.HTTP_NO_CONTENT]:
-                self._retry_count = 0
                 if method == HTTP.GET:
                     return response.json()
                 return None
             elif response.status_code == self.HTTP_GATEWAY_TIMEOUT:
-                print(f">>> {response.reason} - {response.text}: continuing processing, but try a smaller batch size...")
+                logger.warning("%s - %s: continuing processing, but try a smaller batch size...", response.reason, response.text)
                 return {}
             elif response.status_code in [self.HTTP_UNAUTHORIZED, self.HTTP_FORBIDDEN]:
-                if self._retry_count < self.MAX_AUTH_RETRIES:
-                    self._retry_count += 1
+                if _retry_count < self.MAX_AUTH_RETRIES:
                     if 'headers' in kwargs and 'Authorization' in kwargs['headers']:
                         kwargs['headers']['Authorization'] = self._get_auth_token(force_refresh=True)
-                    return self._request(method, url, **kwargs)
+                    return self._request(method, url, _retry_count=_retry_count + 1, **kwargs)
                 else:
                     raise AuthenticationError(f'Authentication failed after {self.MAX_AUTH_RETRIES+1} attempts')
             else:
@@ -125,17 +140,22 @@ class Client:
             raise DatagraphsError(f"Request failed: {e}")
 
     def _has_oauth_credentials(self) -> bool:
-        return bool(self.client_id and self.client_secret)
+        return bool(self._client_id and self._client_secret)
 
     def _get_headers(self, lang: str = 'all') -> Dict[str, str]: 
         headers = {
             'Accept': 'application/json',
-            'x-api-key': self.api_key,
+            'x-api-key': self._api_key,
             'Accept-Language': lang
         }
         if self._has_oauth_credentials():
             headers['Authorization'] = self._get_auth_token()
         return headers
+
+    @staticmethod
+    def _build_query(params: list[tuple[str, str]]) -> str:
+        """Build a query string from key-value pairs."""
+        return '&'.join(f'{k}={v}' for k, v in params)
 
     def _get_data_url(
         self, 
@@ -145,26 +165,44 @@ class Client:
         lang: str, 
         include_date_fields: bool
     ) -> str:
-        url = (
-            f'{self._base_url}_all?filter=type:{type_name}&lang={lang}'
-            f'&pageNo={page_no}&pageSize={page_size}&{self._cache_buster()}'
-        )
+        params = [
+            ('filter', f'type:{type_name}'),
+            ('lang', lang),
+            ('pageNo', page_no),
+            ('pageSize', page_size),
+            ('t', self._cache_buster()),
+        ]
         if include_date_fields:
-            url += "&includeDateFields=true"
-        return url
+            params.append(('includeDateFields', 'true'))
+        return f'{self._base_url}_all?{self._build_query(params)}'
 
     def _cache_buster(self) -> str:
-        return f't={datetime.timestamp(datetime.now())}'
+        """Return a cache-busting timestamp value."""
+        return str(datetime.now(tz=timezone.utc).timestamp())
 
     def status(self) -> str:
-        url = f'{self._service_url}status?{self._cache_buster()}'
-        try:
-            response = self._request(HTTP.GET, url, headers=self._get_headers())
-            return response.get('api', 'unknown')
-        except DatagraphsError as e:
-            raise DatagraphsError(f"Failed to fetch status: {e}")
+        """Check the API service status.
+
+        Returns:
+            The API status string, or ``'unknown'`` if unavailable.
+        """
+        url = f'{self._service_url}status?t={self._cache_buster()}'
+        response = self._request(HTTP.GET, url, headers=self._get_headers())
+        return response.get('api', 'unknown')
 
     def get(self, type_name: str, lang: str = 'all', include_date_fields: bool = False) -> List[Dict[str, Any]]:
+        """Retrieve all entities of a given type.
+
+        Automatically paginates through all results.
+
+        Args:
+            type_name: The entity type to fetch.
+            lang: Language code for results (default ``'all'``).
+            include_date_fields: Whether to include system date metadata.
+
+        Returns:
+            A list of entity dicts.
+        """
         page_no = 1
         resp = self._request(
             HTTP.GET, 
@@ -204,35 +242,36 @@ class Client:
             next_page_token: str = '',
             include_date_fields: bool = False
         ) -> str:
-        url = f'{self._base_url}{dataset}?lang={lang}&{self._cache_buster()}'        
+        params = [('lang', lang), ('t', self._cache_buster())]
         if q:
-            url += f'&q={urllib.parse.quote_plus(q)}'
+            params.append(('q', urllib.parse.quote_plus(q)))
         if filters:
-            url += f'&filter={filters}'
+            params.append(('filter', filters))
         if facets:
             effective_facet_size = facet_size if facet_size > -1 else self.DEFAULT_FACET_SIZE
-            url += f'&facets={facets}&facetSize={effective_facet_size}'
+            params.append(('facets', facets))
+            params.append(('facetSize', effective_facet_size))
         if date_facets:
-            url += f'&dateFacets={date_facets}'
+            params.append(('dateFacets', date_facets))
         if fields:
-            url += f'&fields={fields}'
+            params.append(('fields', fields))
         if embed:
-            url += f'&embed={embed}'
+            params.append(('embed', embed))
         if sort:
-            url += f'&sort={sort}'
+            params.append(('sort', sort))
         if ids:
-            url += f'&ids={ids}'
+            params.append(('ids', ids))
         if page_no > 0:
-            url += f'&pageNo={page_no}'
+            params.append(('pageNo', page_no))
         if page_size > -1:
-            url += f'&pageSize={page_size}'
+            params.append(('pageSize', page_size))
         if previous_page_token:
-            url += f'&previousPageToken={previous_page_token}'
+            params.append(('previousPageToken', previous_page_token))
         if next_page_token:
-            url += f'&nextPageToken={next_page_token}'
+            params.append(('nextPageToken', next_page_token))
         if include_date_fields:
-            url += "&includeDateFields=true"
-        return url
+            params.append(('includeDateFields', 'true'))
+        return f'{self._base_url}{dataset}?{self._build_query(params)}'
 
     def query(self, 
             dataset: str = '_all', 
@@ -293,71 +332,116 @@ class Client:
         else:
             return []
 
-    def put(self, dataset: str, data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> None:
+    def put(self, dataset: str, data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> int:
+        """Load entities into a dataset.
+
+        Args:
+            dataset: Target dataset slug.
+            data: A single entity dict or list of entity dicts.
+
+        Returns:
+            The number of entities loaded.
+        """
         entities = [data] if isinstance(data, dict) else data
         length = len(entities)
-        print(f'Loading {length} entities into dataset {dataset} in repo: {self.project_name}')
+        logger.info('Loading %d entities into dataset %s in repo: %s', length, dataset, self.project_name)
         if length > self._batch_size:
             for i in range(0, length, self._batch_size):
                 batch = entities[i:i + self._batch_size]
                 end = min(i + self._batch_size, length)
-                print(f'   Loading batch {i}-{end} of {length} entities into dataset {dataset} in repo: {self.project_name}')
+                logger.info('   Loading batch %d-%d of %d entities into dataset %s in repo: %s', i, end, length, dataset, self.project_name)
                 self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=batch, headers=self._get_headers())
         else:
             self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=entities, headers=self._get_headers())
+        return length
 
-    def delete(self, type_name: str, id: str) -> None:
-        url = f'{self._base_url}{type_name}/{id}'
+    def delete(self, type_name: str, entity_id: str) -> None:
+        """Delete a single entity by type and ID.
+
+        Args:
+            type_name: The entity type.
+            entity_id: The entity identifier.
+        """
+        url = f'{self._base_url}{type_name}/{entity_id}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
 
     def apply_schema(self, schema: DatagraphsSchema) -> None:
+        """Apply a schema to the project.
+
+        Args:
+            schema: The schema to apply.
+        """
         url = f'{self._base_url}models/_active'
         self._request(HTTP.PUT, url, data=schema.to_json(), headers=self._get_headers())
 
     def get_schema(self) -> DatagraphsSchema:
-        url = f'{self._base_url}models/_active?{self._cache_buster()}'
+        """Retrieve the active schema for the project.
+
+        Returns:
+            The current project schema.
+        """
+        url = f'{self._base_url}models/_active?t={self._cache_buster()}'
         response = self._request(HTTP.GET, url, headers=self._get_headers())        
         return DatagraphsSchema(response)
         
     def get_datasets(self) -> List[Dataset]:
-        datasets = []
-        url = f'{self._base_url}?pageSize=1000&{self._cache_buster()}'
+        """Retrieve all datasets in the project.
+
+        Returns:
+            A list of Dataset objects.
+        """
+        url = f'{self._base_url}?pageSize={self.DEFAULT_DATASETS_PAGE_SIZE}&t={self._cache_buster()}'
         resp = self._request(HTTP.GET, url, headers=self._get_headers())
         data = resp.get("results", []) if resp else []
-        for item in data:
-            datasets.append(Dataset.create_from(item))
-        return datasets
+        if len(data) >= self.DEFAULT_DATASETS_PAGE_SIZE:
+            logger.warning('Dataset results (%d) may have been truncated at page size limit (%d)', len(data), self.DEFAULT_DATASETS_PAGE_SIZE)
+        return [Dataset.create_from(item) for item in data]
 
     def apply_datasets(self, datasets: List[Dataset]) -> None:
+        """Create or update datasets so they match the supplied list.
+
+        Args:
+            datasets: Datasets to apply.
+        """
         target_datasets = self.get_datasets()
         for dataset in datasets:
-            slug = self.get_dataset_slug(dataset)
-            match = next((d for d in target_datasets if self.get_dataset_slug(d) == slug), None)
+            match = next((d for d in target_datasets if d.slug == dataset.slug), None)
             if match is None:
                 self.create_dataset(dataset)
             else:
                 self.update_dataset(dataset)
 
     def create_dataset(self, dataset: Dataset) -> None:
+        """Create a new dataset.
+
+        Args:
+            dataset: The dataset to create.
+        """
         url = f'{self._base_url}datasets'
         self._request(HTTP.POST, url, json=dataset.to_dict(), headers=self._get_headers())
 
     def update_dataset(self, dataset: Dataset) -> None:
-        slug = self.get_dataset_slug(dataset)
-        url = f'{self._base_url}datasets/{slug}'
+        """Update an existing dataset.
+
+        Args:
+            dataset: The dataset to update.
+        """
+        url = f'{self._base_url}datasets/{dataset.slug}'
         self._request(HTTP.PUT, url, json=dataset.to_dict(), headers=self._get_headers())
 
-    def clear_dataset(self, slug: str) -> None:
-        url = f'{self._base_url}{slug}?filter=_all'
+    def clear_dataset(self, dataset: Dataset) -> None:
+        """Delete all data from a dataset.
+
+        Args:
+            dataset: The dataset to clear.
+        """
+        url = f'{self._base_url}{dataset.slug}?filter=_all'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
-    def get_dataset_slug(self, dataset: Dataset) -> str:
-        return dataset.id[dataset.id.rfind(':') + 1:]
-
     def tear_down(self) -> None:
+        """Delete all datasets and their data from the project."""
         datasets = self.get_datasets()
         for dataset in datasets:
-            slug = self.get_dataset_slug(dataset)
-            url = f'{self._base_url}datasets/{slug}'
+            url = f'{self._base_url}datasets/{dataset.slug}'
             self._request(HTTP.DELETE, url, headers=self._get_headers())

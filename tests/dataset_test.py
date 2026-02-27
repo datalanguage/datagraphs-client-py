@@ -42,6 +42,10 @@ class TestDataset:
         dataset = Dataset(name="Test Dataset", account="test_account", project="test_project")
         assert dataset.id == "urn:test_project:test-dataset"
 
+    def test_should_generate_slug(self):
+        dataset = Dataset(name="Test Dataset", account="test_account", project="test_project")
+        assert dataset.slug == "test-dataset"
+
     def test_should_convert_to_dict(self):
         dataset = Dataset(name="Test Dataset", account="test_account", project="test_project", is_private=False, is_restricted=True, classes=["Class1", "Class2"])
         expected_dict = {

@@ -1,4 +1,5 @@
 import json
+import logging
 import pytest
 from datagraphs.client import Client as DatagraphsClient, AuthenticationError, DatagraphsError
 from datagraphs.schema import Schema as DatagraphsSchema
@@ -188,12 +189,12 @@ class TestErrorHandling:
     def setup(self, get_client):
         self.client = get_client()
 
-    def test_should_assume_successful_request_if_gateway_timeout(self, capsys, mocker):
+    def test_should_assume_successful_request_if_gateway_timeout(self, caplog, mocker):
         response = create_response_mock(mocker, 504, reason='Gateway Timeout', text='timeout occurred')
         self.client._http_client.request.return_value = response
-        self.client.get('Test')
-        captured = capsys.readouterr()
-        assert "Gateway Timeout - timeout occurred" in captured.out
+        with caplog.at_level(logging.WARNING):
+            self.client.get('Test')
+        assert "Gateway Timeout - timeout occurred" in caplog.text
 
     def test_should_raise_error_for_unexpected_status_codes(self, mocker):
         response = create_response_mock(mocker, 500, reason='Internal Server Error', text='Something went wrong')
@@ -413,7 +414,8 @@ class TestDatasetOperations:
 
     def test_should_delete_data_from_dataset(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
-        self.client.clear_dataset('1')
+        dataset = Dataset(name='1', project='ds')
+        self.client.clear_dataset(dataset)
         args, kwargs = self.client._http_client.request.call_args_list[0]
         assert args[0] == "delete"
         assert args[1] == "https://api.datagraphs.io/test_project/1?filter=_all"

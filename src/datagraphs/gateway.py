@@ -1,0 +1,169 @@
+import time
+import json
+import logging
+from pathlib import Path
+from typing import Union
+from datagraphs.client import Client as DatagraphsClient
+from datagraphs.schema import Schema
+from datagraphs.dataset import Dataset
+from datagraphs.utils import get_project_from_urn, map_project_name
+
+logger = logging.getLogger(__name__)
+
+class Gateway:
+    """Gateway for loading and dumping data between the filesystem and a Datagraphs project."""
+
+    DEFAULT_WAIT_TIME_MS = 200
+
+    def __init__(self, client: DatagraphsClient, schema: Schema, wait_time_ms: int = DEFAULT_WAIT_TIME_MS) -> None:
+        """Initialise the Gateway.
+
+        Args:
+            client: A Datagraphs API client.
+            schema: The project schema used to determine class hierarchy.
+            wait_time_ms: Delay in milliseconds between successive API calls.
+        """
+        self._client = client
+        self._schema = schema
+        self._wait_time_ms = wait_time_ms
+
+    def load_data(
+        self,
+        datatype: str = Schema.ALL_DATATYPES,
+        from_dir_path: Union[str, Path] = "",
+        file_path: Union[str, Path] = "",
+    ) -> dict:
+        """Load data from JSON files into the Datagraphs project.
+
+        Args:
+            datatype: The class name to load, or ``Schema.ALL_DATATYPES`` to load every
+                non-base class found across all datasets.
+            from_dir_path: Directory containing ``<ClassName>.json`` files.
+            file_path: Explicit path to a single JSON file (used when loading a
+                specific *datatype*).
+
+        Returns:
+            A dict with ``loaded`` and ``skipped`` counts.
+
+        Raises:
+            FileNotFoundError: If *file_path* is supplied but does not exist.
+            ValueError: If the requested *datatype* is not found in any dataset.
+        """
+        from_dir_path = Path(from_dir_path) if from_dir_path else Path()
+        stats = {"loaded": 0, "skipped": 0}
+
+        datasets = self._client.get_datasets()
+        for dataset in datasets:
+            for type_name in dataset.classes:
+                if len(self._schema.find_subclasses(type_name)) == 0:
+                    if type_name == datatype:
+                        result = self._load_from_file(datatype, dataset.slug, from_dir_path, file_path)
+                        stats["loaded"] += result["loaded"]
+                        stats["skipped"] += result["skipped"]
+                        return stats
+                    elif datatype == Schema.ALL_DATATYPES:
+                        result = self._load_from_file(type_name, dataset.slug, from_dir_path)
+                        stats["loaded"] += result["loaded"]
+                        stats["skipped"] += result["skipped"]
+                        time.sleep(self._wait_time_ms / 1000)
+                else:
+                    logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', type_name)
+        if datatype != Schema.ALL_DATATYPES:
+            raise ValueError(f'The class {datatype} was not found in any dataset - cannot load data for this class.')
+        return stats
+
+    def _load_from_file(
+        self,
+        type_name: str,
+        dataset_slug: str,
+        from_dir_path: Union[str, Path] = "",
+        file_path: Union[str, Path] = "",
+    ) -> dict:
+        """Read a JSON file and PUT its contents into the project.
+
+        Returns:
+            A dict with ``loaded`` and ``skipped`` counts.
+
+        Raises:
+            FileNotFoundError: If *file_path* was explicitly provided but does not exist.
+        """
+        json_file_path = Path(from_dir_path).joinpath(f'{type_name}.json') if not file_path else Path(file_path)
+        if json_file_path.is_file():
+            logger.info('Reading data from %s...', json_file_path)
+            with open(json_file_path, 'r', encoding='utf-8') as dataFile:
+                data = json.load(dataFile)
+                if len(data) > 0:
+                    data = self._map_data_project_urns(data)
+                    self._client.put(dataset_slug, data)
+                    return {"loaded": len(data), "skipped": 0}
+                else:
+                    logger.warning('No entities found in file %s...', json_file_path)
+                    return {"loaded": 0, "skipped": 1}
+        else:
+            if file_path:
+                raise FileNotFoundError(f'No file found at {json_file_path}')
+            logger.warning('No file found at %s...', json_file_path)
+            return {"loaded": 0, "skipped": 1}
+
+    def _map_data_project_urns(self, data: list[dict]) -> list[dict]:
+        """Re-map URN project segments to match the current client project.
+
+        Args:
+            data: A list of entity dicts, each containing an ``id`` URN.
+
+        Returns:
+            The list with URNs re-mapped where necessary.
+
+        Raises:
+            ValueError: If an entity is missing a valid string ``id``.
+        """
+        entities = []
+        for entity in data:
+            if isinstance(entity, dict) and 'id' in entity and isinstance(entity['id'], str):
+                source_project_name = get_project_from_urn(entity['id'])
+                if source_project_name != self._client.project_name:
+                    entity = map_project_name(entity, from_urn=f'urn:{source_project_name}:', to_urn=f'urn:{self._client.project_name}:')
+                entities.append(entity)
+            else:
+                raise ValueError(f'Invalid data format - could not read id: {entity}')
+        return entities
+
+    def dump_data(self, to_dir_path: Union[str, Path], datatype: str = Schema.ALL_DATATYPES) -> dict:
+        """Dump data from the Datagraphs project to JSON files on disk.
+
+        Args:
+            to_dir_path: Directory to write ``<ClassName>.json`` files into.
+                Created automatically if it does not exist.
+            datatype: The class name to dump, or ``Schema.ALL_DATATYPES`` for all.
+
+        Returns:
+            A dict with ``exported`` count.
+        """
+        to_dir_path = Path(to_dir_path)
+        to_dir_path.mkdir(parents=True, exist_ok=True)
+        stats = {"exported": 0}
+
+        if datatype == Schema.ALL_DATATYPES:
+            datasets = self._client.get_datasets()
+            for dataset in datasets:
+                for type_name in dataset.classes:
+                    if len(self._schema.find_subclasses(type_name)) == 0:
+                        self._write_to_file(type_name, to_dir_path)
+                        stats["exported"] += 1
+                        time.sleep(self._wait_time_ms / 1000)
+        else:
+            self._write_to_file(datatype, to_dir_path)
+            stats["exported"] += 1
+        return stats
+
+    def _write_to_file(self, type_name: str, to_dir_path: Union[str, Path]) -> None:
+        """Fetch entities of *type_name* from the API and write them to a JSON file.
+
+        Args:
+            type_name: The class name to fetch.
+            to_dir_path: Target directory (must already exist).
+        """
+        data = self._client.get(type_name=type_name)
+        file_path = Path(to_dir_path).joinpath(f'{type_name}.json')
+        with open(file_path, 'w', encoding='utf-8') as dataFile:
+            json.dump(data, dataFile, indent=2)

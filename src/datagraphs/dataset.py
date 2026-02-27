@@ -54,6 +54,10 @@ class Dataset:
   def id(self) -> str:
     return f"urn:{self.project}:{self._sanitise_name(self.name)}"
 
+  @property
+  def slug(self) -> str:
+    return self.id[self.id.rfind(':') + 1:] 
+  
   def _sanitise_name(self, value:str) -> str:
     return value.lower().replace(" ", "-")
 

@@ -5,6 +5,10 @@ def test_should_get_type_from_urn():
     type_name = get_type_from_urn('urn:dg:Test:1234')
     assert type_name == 'Test'
 
+def test_should_get_project_from_urn():    
+    project_name = get_project_from_urn('urn:dg:Test:1234')
+    assert project_name == 'dg'
+
 def test_should_get_id_from_urn():    
     entity_id = get_id_from_urn('urn:dg:Test:1234')
     assert entity_id == '1234'

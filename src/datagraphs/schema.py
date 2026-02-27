@@ -27,6 +27,8 @@ class InvalidInversePropertyError(SchemaError):
 
 class Schema:
 
+  ALL_DATATYPES = '__all_classes__'
+
   # Class-level constant for datatype mappings
   DATATYPE_MAPPINGS = {
       DATATYPE.TEXT: {"elasticsearchDatatype": "text", "xsdDatatype": "string"},

@@ -1,0 +1,248 @@
+[
+  {
+    "label": {
+      "en": "Stabilizer",
+      "@none": "Stabilizer"
+    },
+    "description": {
+      "de": "Stabilisator",
+      "@none": "Stabilisator"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:0ecKnNhBU0xj6Je0nnSemp"
+  },
+  {
+    "label": {
+      "@none": "Major Solvent",
+      "de": "Hauptl\u00f6sungsmittel",
+      "en": "Major Solvent",
+      "it": "Solvente principale",
+      "ro": "Solvent major"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:17E8enDHZiAxiq6rwySIcs"
+  },
+  {
+    "label": {
+      "@none": "Co-formulant",
+      "de": "Beistoff",
+      "en": "Co-formulant",
+      "it": "Coformulante",
+      "ro": "Coformulant"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:1nvZBOtl77AsapvfrMn8aM"
+  },
+  {
+    "label": {
+      "@none": "Synergist",
+      "de": "Synergist",
+      "en": "Synergist",
+      "it": "Sinergico",
+      "ro": "Sinergic"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:1uEjaJIRJtT2Wenvpp4SaE"
+  },
+  {
+    "label": {
+      "en": "Solvent",
+      "@none": "Solvent",
+      "de": "L\u00f6sungsmittel"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:2SFAxSPzqDdMkvpJ3uot99"
+  },
+  {
+    "label": {
+      "en": "Surfactant",
+      "@none": "Surfactant",
+      "fr": "Tensio-actif",
+      "es": "Surfactante",
+      "it": "Tensioattivo",
+      "de": "Tensid",
+      "ro": "Surfactant"
+    },
+    "id": "urn:croplife-dlc:SubstanceRole:2skO6thrvG2z8ACjXR57G3",
+    "type": "SubstanceRole"
+  },
+  {
+    "label": {
+      "@none": "Active ingredient",
+      "de": "Wirkstoff",
+      "en": "Active ingredient",
+      "it": "Principio attivo",
+      "ro": "Ingredient activ",
+      "es": "Ingrediente activo",
+      "fr": "Principe actif",
+      "da": "Aktiv ingrediens",
+      "sl": "Aktivna sestavina",
+      "hr": "Aktivna tvar",
+      "bg": "\u0410\u043a\u0442\u0438\u0432\u043d\u0430 \u0441\u044a\u0441\u0442\u0430\u0432\u043a\u0430",
+      "et": "Aktiivne koostisosa",
+      "sv": "Aktiv substans",
+      "lv": "Darb\u012bg\u0101 viela",
+      "nl": "Actief bestanddeel",
+      "sk": "\u00da\u010dinn\u00e1 l\u00e1tka",
+      "el": "\u0394\u03c1\u03b1\u03c3\u03c4\u03b9\u03ba\u03cc \u03c3\u03c5\u03c3\u03c4\u03b1\u03c4\u03b9\u03ba\u03cc",
+      "cs": "\u00fa\u010dinn\u00e1 l\u00e1tka",
+      "pl": "Substancja czynna",
+      "pt": "Ingrediente ativo",
+      "hu": "Hat\u00f3anyag",
+      "lt": "Veiklioji med\u017eiaga"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:3mm1NUa00Eq0DVMEDrJFAw",
+    "description": {
+      "en": "Active ingredient",
+      "@none": "Active ingredient"
+    }
+  },
+  {
+    "label": {
+      "@none": "Safener",
+      "de": "Safener",
+      "en": "Safener",
+      "it": "Antidoto agronomico",
+      "es": "Ant\u00eddoto"
+    },
+    "description": {
+      "@none": "Safener",
+      "de": "Safener",
+      "en": "Safener",
+      "it": "Antidoto agronomico",
+      "es": "Ant\u00eddoto"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:452RZQ9poS6DlylivUb98j"
+  },
+  {
+    "label": {
+      "en": "Thickener",
+      "@none": "Thickener",
+      "de": "Verdickungsmittel"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:4M35iQss8uciQgaerQ3Opd"
+  },
+  {
+    "label": {
+      "en": "pH regulator",
+      "@none": "pH regulator",
+      "de": "pH-Regler"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:4V9VuY83rfZuEzztVjuqEP"
+  },
+  {
+    "label": {
+      "en": "Dispersant",
+      "@none": "Dispersant",
+      "de": "Dirspergiermittel",
+      "es": "Dispersante",
+      "it": "Disperdente",
+      "ro": "Dispersant",
+      "fr": "Dispersant"
+    },
+    "description": {
+      "en": "A liquid or gas used to disperse small particles in a medium.",
+      "@none": "A liquid or gas used to disperse small particles in a medium."
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:4WcfTTJxcHubErqG4wuskJ"
+  },
+  {
+    "label": {
+      "en": "Effective components",
+      "@none": "Effective components"
+    },
+    "description": {
+      "de": "wirkungsgebende Bestandteile",
+      "@none": "wirkungsgebende Bestandteile"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:4ZhHB4LjilsMsjR9vKtaWv"
+  },
+  {
+    "label": {
+      "@none": "Preservative",
+      "de": "Konservierungsmittel",
+      "en": "Preservative",
+      "it": "Conservante",
+      "ro": "Conservant"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:4ZyGUYBJ7b8dwWsM03ObHv"
+  },
+  {
+    "label": {
+      "en": "Additive",
+      "@none": "Additive",
+      "de": "Zusatzstoff"
+    },
+    "description": {
+      "en": "A substance added to something in small quantities to improve or preserve it.",
+      "@none": "A substance added to something in small quantities to improve or preserve it."
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:4sR3LiIgiLoZMUjLeXfXFM"
+  },
+  {
+    "label": {
+      "en": "Antifreeze agent",
+      "@none": "Antifreeze agent",
+      "de": "Gefrierschutz"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:50VPTgXIvAb6wOjMvtElqc"
+  },
+  {
+    "label": {
+      "en": "Carrier material",
+      "@none": "Carrier material",
+      "de": "Tr\u00e4gerstoff"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:5pryhDaB0BNPyr2MiMfgQb"
+  },
+  {
+    "label": {
+      "en": "Excipient",
+      "@none": "Excipient",
+      "fr": "Excipient",
+      "el": "\u03b2\u03bf\u03b7\u03b8\u03b7\u03c4\u03b9\u03ba\u03ad\u03c2 \u03bf\u03c5\u03c3\u03af\u03b5\u03c2"
+    },
+    "description": {
+      "en": "Excipient",
+      "@none": "Excipient"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:6K6rAqZDXPUUnSAXJWJqn3"
+  },
+  {
+    "label": {
+      "en": "Filler",
+      "@none": "Filler",
+      "de": "F\u00fcllstoff",
+      "it": "Riempitivo",
+      "fr": "Remplissage",
+      "ro": "Remplissage",
+      "es": "Relleno"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:7DLcfqB1v9x6liact8NYKp"
+  },
+  {
+    "label": {
+      "en": "Buffer",
+      "@none": "Buffer",
+      "de": "Puffer"
+    },
+    "description": {
+      "de": "Puffer",
+      "@none": "Puffer"
+    },
+    "type": "SubstanceRole",
+    "id": "urn:croplife-dlc:SubstanceRole:7honAoUg56HLlK34J5TKgr"
+  }
+]

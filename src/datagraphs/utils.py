@@ -20,6 +20,13 @@ def get_type_from_urn(urn: str) -> str:
     last_colon = urn.rfind(':')
     return urn[second_colon + 1:last_colon]
 
+def get_project_from_urn(urn: str) -> str:
+    if not is_valid_urn(urn):
+        raise ValueError(f'Invalid URN: {urn}') 
+    first_colon = urn.index(':')
+    second_colon = urn.index(':', first_colon + 1)
+    return urn[first_colon + 1:second_colon]    
+
 def get_id_from_urn(urn: str) -> str:
     if not is_valid_urn(urn):
         raise ValueError(f'Invalid URN: {urn}') 
