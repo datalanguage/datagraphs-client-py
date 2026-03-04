@@ -53,6 +53,10 @@ class Schema:
     schema['lastModifiedDate'] = datetime.datetime.now(datetime.UTC).isoformat()
     self._schema = schema
 
+  @property
+  def classes(self) -> list[dict]:
+    return self._schema["classes"]
+
   @staticmethod
   def _create_schema(project: str) -> dict:
     guid = uuid.uuid4().hex
@@ -71,7 +75,9 @@ class Schema:
 
   @staticmethod
   def _validate_schema(schema: dict) -> None:
-    required_keys = {'id', 'guid', 'type', 'name', 'project', 'createdDate', 'lastModifiedDate', 'classes'}
+    required_keys = {'name', 'createdDate', 'lastModifiedDate', 'classes'}
+    if 'project' in schema:
+      required_keys.update({'project', 'id', 'type', 'guid'})
     if not all(key in schema for key in required_keys):
       raise SchemaError("Invalid schema.")
 

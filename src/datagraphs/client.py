@@ -326,7 +326,11 @@ class Client:
 
         if resp and 'search' in resp:
             total_results = resp['search']['totalResults']
-            return resp['results'] if total_results > 0 else []
+            results = resp['results'] if total_results > 0 else []
+            if 'facets' in resp:
+                return results, resp['facets']
+            else:
+                return results
         elif len(ids) > 0 and isinstance(resp, list):
             return resp
         else:

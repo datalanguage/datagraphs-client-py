@@ -94,6 +94,7 @@ class Gateway:
                 data = json.load(dataFile)
                 if len(data) > 0:
                     data = self._map_data_project_urns(data)
+                    logger.info('Writing data for %s...', type_name)
                     self._client.put(dataset_slug, data)
                     return {"loaded": len(data), "skipped": 0}
                 else:
@@ -148,21 +149,22 @@ class Gateway:
             for dataset in datasets:
                 for type_name in dataset.classes:
                     if len(self._schema.find_subclasses(type_name)) == 0:
-                        self._write_to_file(type_name, to_dir_path)
+                        self._persist_to_file(type_name, to_dir_path)
                         stats["exported"] += 1
                         time.sleep(self._wait_time_ms / 1000)
         else:
-            self._write_to_file(datatype, to_dir_path)
+            self._persist_to_file(datatype, to_dir_path)
             stats["exported"] += 1
         return stats
 
-    def _write_to_file(self, type_name: str, to_dir_path: Union[str, Path]) -> None:
+    def _persist_to_file(self, type_name: str, to_dir_path: Union[str, Path]) -> None:
         """Fetch entities of *type_name* from the API and write them to a JSON file.
 
         Args:
             type_name: The class name to fetch.
             to_dir_path: Target directory (must already exist).
         """
+        logger.info('Fetching data for %s...', type_name)
         data = self._client.get(type_name=type_name)
         file_path = Path(to_dir_path).joinpath(f'{type_name}.json')
         with open(file_path, 'w', encoding='utf-8') as dataFile:

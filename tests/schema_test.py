@@ -14,6 +14,7 @@ class TestSchemaInitialization:
         assert dict_schema["createdDate"] is not None
         assert dict_schema["lastModifiedDate"] is not None
         assert dict_schema["classes"] == []
+        assert schema.classes == []
 
     def test_should_initialize_with_data(self):
         data = {

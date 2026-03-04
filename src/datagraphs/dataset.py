@@ -82,5 +82,5 @@ class Dataset:
         project=data.get("project"),
         is_private=data.get("isPrivate", True),
         is_restricted=data.get("isRestricted", False),
-        classes=data.get("classes", [])
+        classes=data.get("classes", data.get("conceptTypes", []))
     ) 
