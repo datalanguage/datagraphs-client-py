@@ -322,6 +322,7 @@ class Client:
             dataset, q, filters, facets, facet_size, date_facets, fields, embed, sort, ids, 
             lang, page_no, page_size, previous_page_token, next_page_token, include_date_fields
         )
+        print(url)
         resp = self._request(HTTP.GET, url, headers=self._get_headers(lang))
 
         if resp and 'search' in resp:
@@ -434,13 +435,13 @@ class Client:
         url = f'{self._base_url}datasets/{dataset.slug}'
         self._request(HTTP.PUT, url, json=dataset.to_dict(), headers=self._get_headers())
 
-    def clear_dataset(self, dataset: Dataset) -> None:
+    def clear_dataset(self, dataset_slug: str) -> None:
         """Delete all data from a dataset.
 
         Args:
-            dataset: The dataset to clear.
+            dataset_slug: The slug of the dataset to clear.
         """
-        url = f'{self._base_url}{dataset.slug}?filter=_all'
+        url = f'{self._base_url}{dataset_slug}?filter=_all'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
     def tear_down(self) -> None:

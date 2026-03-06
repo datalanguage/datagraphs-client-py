@@ -14,6 +14,7 @@ class Gateway:
     """Gateway for loading and dumping data between the filesystem and a Datagraphs project."""
 
     DEFAULT_WAIT_TIME_MS = 200
+    UNKNOWN_PROJECT_NAME = '__unknown__'
 
     def __init__(self, client: DatagraphsClient, schema: Schema, wait_time_ms: int = DEFAULT_WAIT_TIME_MS) -> None:
         """Initialise the Gateway.
@@ -120,14 +121,23 @@ class Gateway:
         """
         entities = []
         for entity in data:
-            if isinstance(entity, dict) and 'id' in entity and isinstance(entity['id'], str):
-                source_project_name = get_project_from_urn(entity['id'])
+            if isinstance(entity, dict):
+                source_project_name = self._get_project_name_from_entity(entity)
                 if source_project_name != self._client.project_name:
                     entity = map_project_name(entity, from_urn=f'urn:{source_project_name}:', to_urn=f'urn:{self._client.project_name}:')
                 entities.append(entity)
             else:
-                raise ValueError(f'Invalid data format - could not read id: {entity}')
+                raise ValueError(f'Invalid format - could not read data: {str(entity)}')
         return entities
+
+    def _get_project_name_from_entity(self, entity: dict) -> str:
+        project_name = self.UNKNOWN_PROJECT_NAME
+        if 'id' in entity:
+            if isinstance(entity['id'], str):
+                project_name = get_project_from_urn(entity['id'])
+            else:
+                raise ValueError(f'Expected id property to be string - found type {type(entity['id'])}')
+        return project_name
 
     def dump_data(self, to_dir_path: Union[str, Path], datatype: str = Schema.ALL_DATATYPES) -> dict:
         """Dump data from the Datagraphs project to JSON files on disk.
@@ -148,13 +158,11 @@ class Gateway:
             datasets = self._client.get_datasets()
             for dataset in datasets:
                 for type_name in dataset.classes:
-                    if len(self._schema.find_subclasses(type_name)) == 0:
-                        self._persist_to_file(type_name, to_dir_path)
-                        stats["exported"] += 1
+                    if len(self._schema.find_subclasses(type_name)) == 0:                        
+                        stats["exported"] += self._persist_to_file(type_name, to_dir_path)
                         time.sleep(self._wait_time_ms / 1000)
         else:
-            self._persist_to_file(datatype, to_dir_path)
-            stats["exported"] += 1
+            stats["exported"] += self._persist_to_file(datatype, to_dir_path)
         return stats
 
     def _persist_to_file(self, type_name: str, to_dir_path: Union[str, Path]) -> None:
@@ -169,3 +177,4 @@ class Gateway:
         file_path = Path(to_dir_path).joinpath(f'{type_name}.json')
         with open(file_path, 'w', encoding='utf-8') as dataFile:
             json.dump(data, dataFile, indent=2)
+        return len(data)

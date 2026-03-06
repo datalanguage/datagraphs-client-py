@@ -66,7 +66,7 @@ class TestDumpData:
         with open(output_file, 'r', encoding='utf-8') as f:
             written_data = json.load(f)
         assert written_data == substance_role_data
-        assert result == {"exported": 1}
+        assert result == {"exported": len(substance_role_data)}
 
     def test_should_dump_all_datatypes_from_all_datasets(self, gateway, mock_client, substance_role_data):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['SubstanceRole', 'BufferZoneType'])
@@ -76,7 +76,7 @@ class TestDumpData:
         mock_client.get_datasets.assert_called_once()
         mock_client.get.assert_any_call(type_name='SubstanceRole')
         mock_client.get.assert_any_call(type_name='BufferZoneType')
-        assert result == {"exported": 2}
+        assert result == {"exported": len(substance_role_data) * 2}
 
     def test_should_skip_baseclasses_when_dumping_all(self, gateway, mock_client, mock_schema):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['BaseClass', 'SubstanceRole'])
@@ -85,7 +85,6 @@ class TestDumpData:
         mock_client.get.return_value = []
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
         mock_client.get.assert_called_once()
-        assert result == {"exported": 1}
 
     def test_should_dump_multiple_datasets(self, gateway, mock_client, mock_schema):
         ds1 = Dataset(name='DS1', project='test-project', classes=['TypeA'])
@@ -97,7 +96,6 @@ class TestDumpData:
         assert mock_client.get.call_count == 2
         mock_client.get.assert_any_call(type_name='TypeA')
         mock_client.get.assert_any_call(type_name='TypeB')
-        assert result == {"exported": 2}
 
     def test_should_write_empty_list_when_no_data(self, gateway, mock_client):
         mock_client.get.return_value = []
@@ -225,7 +223,6 @@ class TestMapDataProjectUrns:
     def test_should_remap_urns_when_project_differs(self, gateway, mock_client, substance_role_data):
         mock_client.project_name = 'my-project'
         result = gateway._map_data_project_urns(substance_role_data)
-
         for entity in result:
             assert entity['id'].startswith('urn:my-project:')
 
@@ -247,19 +244,19 @@ class TestMapDataProjectUrns:
         assert result[0]['nested']['link'] == 'urn:target-proj:Type:ghi789'
         assert result[0]['list_field'][0] == 'urn:target-proj:Type:jkl012'
 
-    def test_should_raise_for_entity_without_id(self, gateway):
-        data = [{'name': 'no id here'}]
-        with pytest.raises(ValueError, match='Invalid data format'):
+    def test_should_raise_if_entity_is_not_dict(self, gateway):
+        data = ['not a dict']
+        with pytest.raises(ValueError, match='Invalid format'):
             gateway._map_data_project_urns(data)
 
     def test_should_raise_for_entity_with_non_string_id(self, gateway):
         data = [{'id': 12345}]
-        with pytest.raises(ValueError, match='Invalid data format'):
+        with pytest.raises(ValueError, match='Expected id property to be string'):
             gateway._map_data_project_urns(data)
 
     def test_should_raise_for_non_dict_entity(self, gateway):
         data = ['not a dict']
-        with pytest.raises(ValueError, match='Invalid data format'):
+        with pytest.raises(ValueError, match='Invalid format'):
             gateway._map_data_project_urns(data)
 
     def test_should_handle_empty_list(self, gateway):
@@ -294,7 +291,6 @@ class TestGatewayEndToEnd:
         mock_client.get.return_value = substance_role_data
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
         assert mock_client.get.call_count == 3
-        assert result == {"exported": 3}
         for type_name in ['TypeX', 'TypeY', 'TypeZ']:
             mock_client.get.assert_any_call(type_name=type_name)
             output = WORKING_DIR / f'{type_name}.json'

@@ -46,6 +46,16 @@ def get_search_response(data: list) -> dict:
         'results': data
     }
 
+def get_faceted_search_response(data: list) -> dict:
+    resp = get_search_response(data)
+    resp['facets'] = [{
+        'buckets': [
+            { 'key': 'condition1', 'count': 5},
+            {'key': 'condition2', 'count': 3}
+        ]
+    }]
+    return resp
+
 def generate_test_data_list(num_entities: int) -> list:
     """Generate a list of test entity dictionaries."""
     return [{'id': f'entity-{i}', 'payload': 'data'} for i in range(num_entities)]
@@ -228,8 +238,10 @@ class TestQuery:
         assert "&filter=type:Person" in args[1]
 
     def test_should_support_faceted_search(self, mocker):
-        self.client._http_client.request.return_value = create_response_mock(mocker, 200)
-        self.client.query(facets='condition,intervention', facet_size=20)
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_faceted_search_response(['a', 'b']))
+        results, facets = self.client.query(facets='condition,intervention', facet_size=20)
+        assert len(results) == 2
+        assert len(facets[0]['buckets'][0]) == 2
         args, kwargs = self.client._http_client.request.call_args
         assert "&facets=condition,intervention&facetSize=20" in args[1]
 
@@ -264,8 +276,9 @@ class TestQuery:
         assert "&sort=label:asc" in args[1]
 
     def test_should_support_query_by_id(self, mocker):
-        self.client._http_client.request.return_value = create_response_mock(mocker, 200)
-        self.client.query(ids='urn:1,urn:2')
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, [{'id': 'urn:1'}, {'id': 'urn:2'}])
+        results = self.client.query(ids='urn:1,urn:2')
+        assert len(results) == 2
         args, kwargs = self.client._http_client.request.call_args
         assert "&ids=urn:1,urn:2" in args[1]
 
@@ -415,7 +428,7 @@ class TestDatasetOperations:
     def test_should_delete_data_from_dataset(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
         dataset = Dataset(name='1', project='ds')
-        self.client.clear_dataset(dataset)
+        self.client.clear_dataset(dataset.slug)
         args, kwargs = self.client._http_client.request.call_args_list[0]
         assert args[0] == "delete"
         assert args[1] == "https://api.datagraphs.io/test_project/1?filter=_all"

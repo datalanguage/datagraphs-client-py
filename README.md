@@ -10,6 +10,5 @@ Install uv as per https://docs.astral.sh/uv/getting-started/installation/ then:
 
 ## TODO
 1. Improve property order handling
-1. Add more integration tests
 1. Migrate to new schema structure
 
