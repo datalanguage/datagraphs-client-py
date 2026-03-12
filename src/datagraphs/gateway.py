@@ -139,13 +139,14 @@ class Gateway:
                 raise ValueError(f'Expected id property to be string - found type {type(entity['id'])}')
         return project_name
 
-    def dump_data(self, to_dir_path: Union[str, Path], datatype: str = Schema.ALL_DATATYPES) -> dict:
+    def dump_data(self, to_dir_path: Union[str, Path], datatype: str = Schema.ALL_DATATYPES, include_date_fields: bool = False) -> dict:
         """Dump data from the Datagraphs project to JSON files on disk.
 
         Args:
             to_dir_path: Directory to write ``<ClassName>.json`` files into.
                 Created automatically if it does not exist.
             datatype: The class name to dump, or ``Schema.ALL_DATATYPES`` for all.
+            include_date_fields: Whether to include date fields in the dumped data.
 
         Returns:
             A dict with ``exported`` count.
@@ -159,13 +160,13 @@ class Gateway:
             for dataset in datasets:
                 for type_name in dataset.classes:
                     if len(self._schema.find_subclasses(type_name)) == 0:                        
-                        stats["exported"] += self._persist_to_file(type_name, to_dir_path)
+                        stats["exported"] += self._persist_to_file(type_name, to_dir_path, include_date_fields)
                         time.sleep(self._wait_time_ms / 1000)
         else:
-            stats["exported"] += self._persist_to_file(datatype, to_dir_path)
+            stats["exported"] += self._persist_to_file(datatype, to_dir_path, include_date_fields)
         return stats
 
-    def _persist_to_file(self, type_name: str, to_dir_path: Union[str, Path]) -> None:
+    def _persist_to_file(self, type_name: str, to_dir_path: Union[str, Path], include_date_fields: bool) -> None:
         """Fetch entities of *type_name* from the API and write them to a JSON file.
 
         Args:
@@ -173,7 +174,7 @@ class Gateway:
             to_dir_path: Target directory (must already exist).
         """
         logger.info('Fetching data for %s...', type_name)
-        data = self._client.get(type_name=type_name)
+        data = self._client.get(type_name=type_name, include_date_fields=include_date_fields)
         file_path = Path(to_dir_path).joinpath(f'{type_name}.json')
         with open(file_path, 'w', encoding='utf-8') as dataFile:
             json.dump(data, dataFile, indent=2)

@@ -60,7 +60,7 @@ class TestDumpData:
     def test_should_dump_single_datatype_to_file(self, gateway, mock_client, substance_role_data):
         mock_client.get.return_value = substance_role_data
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR), datatype='SubstanceRole')
-        mock_client.get.assert_called_once_with(type_name='SubstanceRole')
+        mock_client.get.assert_called_once_with(type_name='SubstanceRole', include_date_fields=False)
         output_file = WORKING_DIR / 'SubstanceRole.json'
         assert output_file.exists()
         with open(output_file, 'r', encoding='utf-8') as f:
@@ -74,8 +74,8 @@ class TestDumpData:
         mock_client.get.return_value = substance_role_data
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
         mock_client.get_datasets.assert_called_once()
-        mock_client.get.assert_any_call(type_name='SubstanceRole')
-        mock_client.get.assert_any_call(type_name='BufferZoneType')
+        mock_client.get.assert_any_call(type_name='SubstanceRole', include_date_fields=False)
+        mock_client.get.assert_any_call(type_name='BufferZoneType', include_date_fields=False)
         assert result == {"exported": len(substance_role_data) * 2}
 
     def test_should_skip_baseclasses_when_dumping_all(self, gateway, mock_client, mock_schema):
@@ -94,8 +94,8 @@ class TestDumpData:
         mock_client.get.return_value = []
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
         assert mock_client.get.call_count == 2
-        mock_client.get.assert_any_call(type_name='TypeA')
-        mock_client.get.assert_any_call(type_name='TypeB')
+        mock_client.get.assert_any_call(type_name='TypeA', include_date_fields=False)
+        mock_client.get.assert_any_call(type_name='TypeB', include_date_fields=False)
 
     def test_should_write_empty_list_when_no_data(self, gateway, mock_client):
         mock_client.get.return_value = []
@@ -292,7 +292,7 @@ class TestGatewayEndToEnd:
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
         assert mock_client.get.call_count == 3
         for type_name in ['TypeX', 'TypeY', 'TypeZ']:
-            mock_client.get.assert_any_call(type_name=type_name)
+            mock_client.get.assert_any_call(type_name=type_name, include_date_fields=False)
             output = WORKING_DIR / f'{type_name}.json'
             assert output.exists()
             os.remove(output)
