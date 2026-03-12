@@ -1,3 +1,5 @@
+"""Gateway for synchronising data between the filesystem and a DataGraphs project."""
+
 import time
 import json
 import logging
@@ -166,7 +168,7 @@ class Gateway:
             stats["exported"] += self._persist_to_file(datatype, to_dir_path, include_date_fields)
         return stats
 
-    def _persist_to_file(self, type_name: str, to_dir_path: Union[str, Path], include_date_fields: bool) -> None:
+    def _persist_to_file(self, type_name: str, to_dir_path: Union[str, Path], include_date_fields: bool) -> int:
         """Fetch entities of *type_name* from the API and write them to a JSON file.
 
         Args:

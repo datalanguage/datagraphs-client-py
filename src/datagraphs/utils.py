@@ -1,3 +1,5 @@
+"""URN parsing and project-name mapping utilities."""
+
 import re
 from typing import Dict, List, Any, Union
 
@@ -11,9 +13,11 @@ URN_PATTERN = re.compile(
 )
 
 def is_valid_urn(urn: str) -> bool:
+    """Return ``True`` if *urn* matches the RFC 2141 URN syntax."""
     return URN_PATTERN.match(urn) is not None
 
 def get_type_from_urn(urn: str) -> str:
+    """Extract the type segment from a URN (between the second and last colons)."""
     if not is_valid_urn(urn):
         raise ValueError(f'Invalid URN: {urn}') 
     second_colon = urn.index(':', urn.index(':') + 1)
@@ -21,6 +25,7 @@ def get_type_from_urn(urn: str) -> str:
     return urn[second_colon + 1:last_colon]
 
 def get_project_from_urn(urn: str) -> str:
+    """Extract the project name from a URN (between the first and second colons)."""
     if not is_valid_urn(urn):
         raise ValueError(f'Invalid URN: {urn}') 
     first_colon = urn.index(':')
@@ -28,6 +33,7 @@ def get_project_from_urn(urn: str) -> str:
     return urn[first_colon + 1:second_colon]    
 
 def get_id_from_urn(urn: str) -> str:
+    """Extract the trailing identifier from a URN (after the last colon)."""
     if not is_valid_urn(urn):
         raise ValueError(f'Invalid URN: {urn}') 
     return urn[urn.rfind(':') + 1:]
@@ -37,6 +43,7 @@ def map_project_name(
     from_urn: str, 
     to_urn: str
 ) -> Union[Dict, List, str, Any]:
+    """Recursively replace *from_urn* with *to_urn* in all string values of *obj*."""
     if isinstance(obj, dict):
         return {key: map_project_name(value, from_urn, to_urn) for key, value in obj.items()}
     elif isinstance(obj, list):

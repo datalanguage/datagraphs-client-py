@@ -1,6 +1,10 @@
+"""Supported property datatypes for DataGraphs schemas."""
+
 from enum import StrEnum
 
+
 class DATATYPE(StrEnum):
+    """Enumeration of property datatypes available in a DataGraphs schema."""
     TEXT = 'text'
     DATE = 'date'
     DATETIME = 'datetime'

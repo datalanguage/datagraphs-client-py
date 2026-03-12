@@ -1,3 +1,5 @@
+"""DataGraphs API client for interacting with the DataGraphs service."""
+
 import logging
 import requests
 import json
@@ -290,7 +292,7 @@ class Client:
             previous_page_token: str = '',
             next_page_token: str = '',
             include_date_fields: bool = False
-        ) -> List[Dict[str, Any]]:
+        ) -> Union[List[Dict[str, Any]], tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
         """
         Query the API with various filters and options.
         
@@ -322,7 +324,6 @@ class Client:
             dataset, q, filters, facets, facet_size, date_facets, fields, embed, sort, ids, 
             lang, page_no, page_size, previous_page_token, next_page_token, include_date_fields
         )
-        print(url)
         resp = self._request(HTTP.GET, url, headers=self._get_headers(lang))
 
         if resp and 'search' in resp:

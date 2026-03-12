@@ -1,4 +1,3 @@
-
 *.py[cod]
 *.venv
 *.pytest_cache
