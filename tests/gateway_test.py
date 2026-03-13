@@ -178,12 +178,14 @@ class TestLoadData:
         assert 'No file found' in caplog.text
         assert result["skipped"] == 1
 
-    def test_should_raise_when_explicit_file_path_not_found(self, gateway, mock_client):
+    def test_should_raise_when_explicit_file_path_not_found(self, gateway, mock_client, caplog):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
         mock_client.get_datasets.return_value = [dataset]
-        with pytest.raises(FileNotFoundError, match='No file found'):
-            gateway.load_data(datatype='SubstanceRole', file_path='/nonexistent_path')
+        with caplog.at_level(logging.ERROR):
+            result = gateway.load_data(datatype='SubstanceRole', file_path='/nonexistent_path')
         mock_client.put.assert_not_called()
+        assert 'No file found' in caplog.text
+        assert result["skipped"] == 1
 
     def test_should_not_attempt_to_write_data_if_file_is_empty_list(self, gateway, mock_client):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
@@ -195,12 +197,15 @@ class TestLoadData:
         assert result["loaded"] == 0
         assert result["skipped"] == 1
 
-    def test_should_raise_when_datatype_not_in_any_dataset(self, gateway, mock_client):
+    def test_should_raise_when_datatype_not_in_any_dataset(self, gateway, mock_client, caplog):
         dataset = Dataset(name='Test', project='test', classes=['TypeA'])
         mock_client.get_datasets.return_value = [dataset]
-        with pytest.raises(ValueError, match='was not found in any dataset'):
-            gateway.load_data(datatype='NonExistentType')
-
+        with caplog.at_level(logging.ERROR):
+            result = gateway.load_data(datatype='NonExistentType')
+        mock_client.put.assert_not_called()
+        assert 'was not found in any dataset' in caplog.text
+        assert result["skipped"] == 1
+        
     def test_should_accept_path_object_for_from_dir_path(self, gateway, mock_client, substance_role_data):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
         mock_client.get_datasets.return_value = [dataset]

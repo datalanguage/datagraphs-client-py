@@ -64,19 +64,28 @@ class Gateway:
             for type_name in dataset.classes:
                 if len(self._schema.find_subclasses(type_name)) == 0:
                     if type_name == datatype:
-                        result = self._load_from_file(datatype, dataset.slug, from_dir_path, file_path)
-                        stats["loaded"] += result["loaded"]
-                        stats["skipped"] += result["skipped"]
+                        try:
+                            result = self._load_from_file(type_name, dataset.slug, from_dir_path, file_path)
+                            stats["loaded"] += result["loaded"]
+                            stats["skipped"] += result["skipped"]
+                        except Exception as e:
+                            logger.error('Error loading data for %s: %s', type_name, str(e))
+                            stats["skipped"] += 1
                         return stats
                     elif datatype == Schema.ALL_DATATYPES:
-                        result = self._load_from_file(type_name, dataset.slug, from_dir_path)
-                        stats["loaded"] += result["loaded"]
-                        stats["skipped"] += result["skipped"]
-                        time.sleep(self._wait_time_ms / 1000)
+                        try:
+                            result = self._load_from_file(type_name, dataset.slug, from_dir_path)
+                            stats["loaded"] += result["loaded"]
+                            stats["skipped"] += result["skipped"]
+                            time.sleep(self._wait_time_ms / 1000)
+                        except Exception as e:
+                            logger.error('Error loading data for %s: %s', type_name, str(e))
+                            stats["skipped"] += 1
                 else:
                     logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', type_name)
         if datatype != Schema.ALL_DATATYPES:
-            raise ValueError(f'The class {datatype} was not found in any dataset - cannot load data for this class.')
+            logger.error('The class %s was not found in any dataset - cannot load data for this class.', datatype)
+            stats["skipped"] += 1
         return stats
 
     def _load_from_file(
@@ -108,9 +117,7 @@ class Gateway:
                     logger.warning('No entities found in file %s...', json_file_path)
                     return {"loaded": 0, "skipped": 1}
         else:
-            if file_path:
-                raise FileNotFoundError(f'No file found at {json_file_path}')
-            logger.warning('No file found at %s...', json_file_path)
+            logger.error('No file found at %s...', json_file_path)
             return {"loaded": 0, "skipped": 1}
 
     def _map_data_project_urns(self, data: list[dict]) -> list[dict]:
@@ -165,11 +172,19 @@ class Gateway:
             datasets = self._client.get_datasets()
             for dataset in datasets:
                 for type_name in dataset.classes:
-                    if len(self._schema.find_subclasses(type_name)) == 0:                        
-                        stats["exported"] += self._persist_to_file(type_name, to_dir_path, include_date_fields)
-                        time.sleep(self._wait_time_ms / 1000)
+                    if len(self._schema.find_subclasses(type_name)) == 0:   
+                        try:
+                            result = self._persist_to_file(type_name, to_dir_path, include_date_fields)
+                            stats["exported"] += result
+                            time.sleep(self._wait_time_ms / 1000)
+                        except Exception as e:
+                            logger.error('Error exporting data for %s: %s', type_name, str(e))                     
         else:
-            stats["exported"] += self._persist_to_file(datatype, to_dir_path, include_date_fields)
+            try:
+                result = self._persist_to_file(datatype, to_dir_path, include_date_fields)
+                stats["exported"] += result
+            except Exception as e:
+                logger.error('Error exporting data for %s: %s', datatype, str(e))
         return stats
 
     def _persist_to_file(self, type_name: str, to_dir_path: Union[str, Path], include_date_fields: bool) -> int:
