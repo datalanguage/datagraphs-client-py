@@ -181,3 +181,9 @@ class Gateway:
         with open(file_path, 'w', encoding='utf-8') as dataFile:
             json.dump(data, dataFile, indent=2)
         return len(data)
+
+    def clear_down(self) -> None:
+        """Clear data out of all datasets."""
+        datasets = self._client.get_datasets()
+        for dataset in datasets:
+            self._client.clear_dataset(dataset.slug)

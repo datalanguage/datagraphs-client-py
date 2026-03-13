@@ -212,6 +212,19 @@ class TestLoadData:
             gateway.load_data()
         assert 'baseclass' in caplog.text
 
+class TestClearData:
+
+    def test_should_clear_down_project(self, gateway, mock_client):
+        datasets = [
+            Dataset(name='Test', project='test', classes=['TypeA']), 
+            Dataset(name='Test2', project='test', classes=['TypeB'])
+        ]
+        mock_client.get_datasets.return_value = datasets
+        gateway.clear_down()
+        assert mock_client.clear_dataset.call_count == 2
+        mock_client.clear_dataset.assert_any_call('test')
+        mock_client.clear_dataset.assert_any_call('test2')
+
 
 class TestMapDataProjectUrns:
 
