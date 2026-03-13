@@ -49,6 +49,9 @@ class TestInit:
         gateway = DatagraphsGateway(mock_client, mock_schema, wait_time_ms=500)
         assert gateway._wait_time_ms == 500
 
+    def test_client_property(self, gateway, mock_client):
+        assert gateway.client is mock_client
+
 class TestDumpData:
 
     def setup_method(self):

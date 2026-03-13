@@ -38,13 +38,19 @@ def create_response_mock(mocker, status_code: int = 200, data: dict = None, reas
     response_mock.text = text
     return response_mock
 
-def get_search_response(data: list) -> dict:
-    return {
+def get_search_response(data: list, token: str = '') -> dict:
+    resp = {
         'search': { 
             'totalResults': len(data)
         },
         'results': data
     }
+    if len(token) > 0:
+        resp['search']['nextPageToken'] = token
+
+    print(resp)
+
+    return resp
 
 def get_faceted_search_response(data: list) -> dict:
     resp = get_search_response(data)
@@ -189,9 +195,26 @@ class TestPagination:
         self.client.get('Test')
         assert self.client._http_client.request.call_count == 2
         args, kwargs = self.client._http_client.request.call_args_list[0]
-        assert '&pageNo=1&pageSize=2' in args[1]
+        assert '&pageNo=1' in args[1]
+        assert '&pageSize=2' in args[1]
         args, kwargs = self.client._http_client.request.call_args_list[1]
-        assert '&pageNo=2&pageSize=2' in args[1]
+        assert '&pageNo=2' in args[1]
+        assert '&pageSize=2' in args[1]
+
+    def test_should_batch_get_requests_by_page_token_if_present(self, mocker):
+        next_page_token = 'test-token'
+        data = get_search_response(['a', 'b', 'c'], token=next_page_token)
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, data)
+        self.client.get('Test')
+        assert self.client._http_client.request.call_count == 2
+        args, kwargs = self.client._http_client.request.call_args_list[0]
+        assert f'&pageNo=1' in args[1]
+        assert '&pageSize=2' in args[1]
+        args, kwargs = self.client._http_client.request.call_args_list[1]
+        assert f'&nextPageToken={next_page_token}' in args[1]
+        assert '&pageSize=2' in args[1]
+
+
 
 # Error Handling Tests
 class TestErrorHandling:
@@ -300,7 +323,8 @@ class TestQuery:
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
         self.client.query(q='test', page_no=2, page_size=25)
         args, kwargs = self.client._http_client.request.call_args
-        assert '&pageNo=2&pageSize=25' in args[1]
+        assert '&pageNo=2' in args[1]
+        assert '&pageSize=25' in args[1]
 
     def test_should_support_token_based_pagination(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)

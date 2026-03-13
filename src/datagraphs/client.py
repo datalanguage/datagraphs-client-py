@@ -162,18 +162,22 @@ class Client:
     def _get_data_url(
         self, 
         type_name: str, 
-        page_no: int, 
         page_size: int, 
         lang: str, 
-        include_date_fields: bool
+        include_date_fields: bool,
+        next_page_token: str = '', 
+        page_no: int = -1
     ) -> str:
         params = [
             ('filter', f'type:{type_name}'),
             ('lang', lang),
-            ('pageNo', page_no),
             ('pageSize', page_size),
             ('t', self._cache_buster()),
         ]
+        if len(next_page_token) > 0:
+            params.append(('nextPageToken', next_page_token))
+        elif page_no > 0:
+            params.append(('pageNo', page_no))
         if include_date_fields:
             params.append(('includeDateFields', 'true'))
         return f'{self._base_url}_all?{self._build_query(params)}'
@@ -208,7 +212,7 @@ class Client:
         page_no = 1
         resp = self._request(
             HTTP.GET, 
-            self._get_data_url(type_name, page_no, self._batch_size, lang, include_date_fields), 
+            self._get_data_url(type_name, page_no=page_no, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields), 
             headers=self._get_headers(lang)
         )
         if 'search' in resp:
@@ -216,11 +220,12 @@ class Client:
             data = resp['results'] if total_results > 0 else []
             while page_no * self._batch_size < total_results:
                 page_no += 1
-                resp = self._request(
-                    HTTP.GET, 
-                    self._get_data_url(type_name, page_no, self._batch_size, lang, include_date_fields), 
-                    headers=self._get_headers(lang)
-                )
+                if 'nextPageToken' in resp['search']:
+                    next_page_token = resp['search']['nextPageToken']
+                    url = self._get_data_url(type_name, next_page_token=next_page_token, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields)
+                else:
+                    url = self._get_data_url(type_name, page_no=page_no, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields)
+                resp = self._request(HTTP.GET, url, headers=self._get_headers(lang))
                 if 'results' in resp:
                     data.extend(resp['results'])
             return data

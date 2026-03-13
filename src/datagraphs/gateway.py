@@ -30,6 +30,10 @@ class Gateway:
         self._schema = schema
         self._wait_time_ms = wait_time_ms
 
+    @property
+    def client(self) -> DatagraphsClient:
+        return self._client
+
     def load_data(
         self,
         datatype: str = Schema.ALL_DATATYPES,
