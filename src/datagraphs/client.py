@@ -378,6 +378,7 @@ class Client:
         Args:
             schema: The schema to apply.
         """
+        logger.info('Applying schema to project: %s', self.project_name)
         url = f'{self._base_url}models/_active'
         self._request(HTTP.PUT, url, data=schema.to_json(), headers=self._get_headers())
 
@@ -410,6 +411,7 @@ class Client:
         Args:
             datasets: Datasets to apply.
         """
+        logger.info('Applying datasets update to project: %s', self.project_name)
         target_datasets = self.get_datasets()
         for dataset in datasets:
             match = next((d for d in target_datasets if d.slug == dataset.slug), None)
@@ -442,6 +444,7 @@ class Client:
         Args:
             dataset_slug: The slug of the dataset to clear.
         """
+        logger.info('Clearing down data from dataset: %s', dataset_slug)
         url = f'{self._base_url}{dataset_slug}?filter=_all'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
@@ -449,5 +452,6 @@ class Client:
         """Delete all datasets and their data from the project."""
         datasets = self.get_datasets()
         for dataset in datasets:
+            logger.info('Dropping dataset: %s', dataset.slug)
             url = f'{self._base_url}datasets/{dataset.slug}'
             self._request(HTTP.DELETE, url, headers=self._get_headers())
