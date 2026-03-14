@@ -35,8 +35,8 @@ class TestDataOperations:
         request.cls.client.put('pets', get_data())
 
     def test_should_create_data(self) -> None:
-        assert len(self.client.get(type_name='Cat')) == 2
-        assert len(self.client.get(type_name='Dog')) == 2
+        assert len(self.client.get(class_name='Cat')) == 2
+        assert len(self.client.get(class_name='Dog')) == 2
 
     def test_should_query_by_dataset(self) -> None:
         results = self.client.query(dataset='pets')

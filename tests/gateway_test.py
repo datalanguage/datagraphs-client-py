@@ -62,8 +62,8 @@ class TestDumpData:
 
     def test_should_dump_single_datatype_to_file(self, gateway, mock_client, substance_role_data):
         mock_client.get.return_value = substance_role_data
-        result = gateway.dump_data(to_dir_path=str(WORKING_DIR), datatype='SubstanceRole')
-        mock_client.get.assert_called_once_with(type_name='SubstanceRole', include_date_fields=False)
+        result = gateway.dump_data(to_dir_path=str(WORKING_DIR), class_name='SubstanceRole')
+        mock_client.get.assert_called_once_with(class_name='SubstanceRole', include_date_fields=False)
         output_file = WORKING_DIR / 'SubstanceRole.json'
         assert output_file.exists()
         with open(output_file, 'r', encoding='utf-8') as f:
@@ -71,14 +71,14 @@ class TestDumpData:
         assert written_data == substance_role_data
         assert result == {"exported": len(substance_role_data)}
 
-    def test_should_dump_all_datatypes_from_all_datasets(self, gateway, mock_client, substance_role_data):
+    def test_should_dump_all_classes_from_all_datasets(self, gateway, mock_client, substance_role_data):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['SubstanceRole', 'BufferZoneType'])
         mock_client.get_datasets.return_value = [dataset]
         mock_client.get.return_value = substance_role_data
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
         mock_client.get_datasets.assert_called_once()
-        mock_client.get.assert_any_call(type_name='SubstanceRole', include_date_fields=False)
-        mock_client.get.assert_any_call(type_name='BufferZoneType', include_date_fields=False)
+        mock_client.get.assert_any_call(class_name='SubstanceRole', include_date_fields=False)
+        mock_client.get.assert_any_call(class_name='BufferZoneType', include_date_fields=False)
         assert result == {"exported": len(substance_role_data) * 2}
 
     def test_should_skip_baseclasses_when_dumping_all(self, gateway, mock_client, mock_schema):
@@ -97,13 +97,13 @@ class TestDumpData:
         mock_client.get.return_value = []
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
         assert mock_client.get.call_count == 2
-        mock_client.get.assert_any_call(type_name='TypeA', include_date_fields=False)
-        mock_client.get.assert_any_call(type_name='TypeB', include_date_fields=False)
+        mock_client.get.assert_any_call(class_name='TypeA', include_date_fields=False)
+        mock_client.get.assert_any_call(class_name='TypeB', include_date_fields=False)
 
     def test_should_write_empty_list_when_no_data(self, gateway, mock_client):
         mock_client.get.return_value = []
         output_file = WORKING_DIR / 'EmptyType.json'
-        gateway.dump_data(to_dir_path=str(WORKING_DIR), datatype='EmptyType')
+        gateway.dump_data(to_dir_path=str(WORKING_DIR), class_name='EmptyType')
         with open(output_file, 'r', encoding='utf-8') as f:
             written_data = json.load(f)
         assert written_data == []
@@ -116,7 +116,7 @@ class TestDumpData:
             for f in new_dir.iterdir():
                 f.unlink()
             new_dir.rmdir()
-        gateway.dump_data(to_dir_path=str(new_dir), datatype='SomeType')
+        gateway.dump_data(to_dir_path=str(new_dir), class_name='SomeType')
         assert new_dir.exists()
         output_file = new_dir / 'SomeType.json'
         assert output_file.exists()
@@ -125,7 +125,7 @@ class TestDumpData:
 
     def test_should_accept_path_object_for_to_dir_path(self, gateway, mock_client):
         mock_client.get.return_value = []
-        gateway.dump_data(to_dir_path=WORKING_DIR, datatype='PathTest')
+        gateway.dump_data(to_dir_path=WORKING_DIR, class_name='PathTest')
         output_file = WORKING_DIR / 'PathTest.json'
         assert output_file.exists()
         os.remove(output_file)
@@ -138,7 +138,7 @@ class TestLoadData:
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['SubstanceRole'])
         mock_client.get_datasets.return_value = [dataset]
         result = gateway.load_data(
-            datatype='SubstanceRole',
+            class_name='SubstanceRole',
             file_path=str(SUBSTANCE_ROLE_FILE)
         )
         mock_client.put.assert_called_once()
@@ -149,7 +149,7 @@ class TestLoadData:
         assert result["loaded"] == len(substance_role_data)
         assert result["skipped"] == 0
 
-    def test_should_load_all_datatypes_from_all_datasets(self, gateway, mock_client, mock_schema, substance_role_data):
+    def test_should_load_all_classes_from_all_datasets(self, gateway, mock_client, mock_schema, substance_role_data):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['SubstanceRole', 'BufferZoneType'])
         mock_client.get_datasets.return_value = [dataset]
         mock_schema.find_subclasses.return_value = []
@@ -173,7 +173,7 @@ class TestLoadData:
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
         mock_client.get_datasets.return_value = [dataset]
         with caplog.at_level(logging.WARNING):
-            result = gateway.load_data(datatype='SubstanceRole', from_dir_path='/nonexistent_path')
+            result = gateway.load_data(class_name='SubstanceRole', from_dir_path='/nonexistent_path')
         mock_client.put.assert_not_called()
         assert 'No file found' in caplog.text
         assert result["skipped"] == 1
@@ -182,7 +182,7 @@ class TestLoadData:
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
         mock_client.get_datasets.return_value = [dataset]
         with caplog.at_level(logging.ERROR):
-            result = gateway.load_data(datatype='SubstanceRole', file_path='/nonexistent_path')
+            result = gateway.load_data(class_name='SubstanceRole', file_path='/nonexistent_path')
         mock_client.put.assert_not_called()
         assert 'No file found' in caplog.text
         assert result["skipped"] == 1
@@ -192,7 +192,7 @@ class TestLoadData:
         mock_client.get_datasets.return_value = [dataset]
         with patch.object(Path, 'is_file', return_value=True), \
              patch('builtins.open', mock_open(read_data='[]')):
-            result = gateway.load_data(datatype='SubstanceRole', file_path='dummy.json')
+            result = gateway.load_data(class_name='SubstanceRole', file_path='dummy.json')
         mock_client.put.assert_not_called()
         assert result["loaded"] == 0
         assert result["skipped"] == 1
@@ -201,7 +201,7 @@ class TestLoadData:
         dataset = Dataset(name='Test', project='test', classes=['TypeA'])
         mock_client.get_datasets.return_value = [dataset]
         with caplog.at_level(logging.ERROR):
-            result = gateway.load_data(datatype='NonExistentType')
+            result = gateway.load_data(class_name='NonExistentType')
         mock_client.put.assert_not_called()
         assert 'was not found in any dataset' in caplog.text
         assert result["skipped"] == 1
@@ -209,7 +209,7 @@ class TestLoadData:
     def test_should_accept_path_object_for_from_dir_path(self, gateway, mock_client, substance_role_data):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
         mock_client.get_datasets.return_value = [dataset]
-        gateway.load_data(datatype='SubstanceRole', from_dir_path=DATA_DIR, file_path=SUBSTANCE_ROLE_FILE)
+        gateway.load_data(class_name='SubstanceRole', from_dir_path=DATA_DIR, file_path=SUBSTANCE_ROLE_FILE)
         mock_client.put.assert_called_once()
 
     def test_should_log_baseclass_info(self, gateway, mock_client, mock_schema, caplog):
@@ -312,8 +312,8 @@ class TestGatewayEndToEnd:
         mock_client.get.return_value = substance_role_data
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
         assert mock_client.get.call_count == 3
-        for type_name in ['TypeX', 'TypeY', 'TypeZ']:
-            mock_client.get.assert_any_call(type_name=type_name, include_date_fields=False)
-            output = WORKING_DIR / f'{type_name}.json'
+        for class_name in ['TypeX', 'TypeY', 'TypeZ']:
+            mock_client.get.assert_any_call(class_name=class_name, include_date_fields=False)
+            output = WORKING_DIR / f'{class_name}.json'
             assert output.exists()
             os.remove(output)

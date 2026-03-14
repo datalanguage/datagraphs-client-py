@@ -44,11 +44,11 @@ class TestGateway:
     def test_should_load_data_from_file(self) -> None:
         cats = get_data('Cat')
         write_json(cats, 'Cat')
-        stats = self.gateway.load_data(datatype='Cat', from_dir_path='./')
+        stats = self.gateway.load_data(class_name='Cat', from_dir_path='./')
         assert stats['loaded'] == len(cats)
 
     def test_should_dump_data_to_file(self) -> None:
         self.client.put('pets', get_data('Dog'))
-        stats = self.gateway.dump_data(to_dir_path='./', datatype='Dog')
+        stats = self.gateway.dump_data(to_dir_path='./', class_name='Dog')
         dogs = read_json('Dog')
         assert stats['exported'] == len(dogs)

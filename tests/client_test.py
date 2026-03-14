@@ -132,7 +132,7 @@ class TestDataRetrieval:
         status = self.client.status()
         assert status == 'OK'
 
-    def test_should_get_data_for_specified_type_name_from_correct_endpoint(self, mocker):
+    def test_should_get_data_for_specified_class_name_from_correct_endpoint(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
         self.client.get('Test')
         args, kwargs = self.client._http_client.request.call_args
@@ -147,7 +147,7 @@ class TestDataRetrieval:
 
     def test_should_get_data_for_specified_type_in_specified_language(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
-        self.client.get(type_name='Test', lang='fr')
+        self.client.get(class_name='Test', lang='fr')
         args, kwargs = self.client._http_client.request.call_args
         assert '&lang=fr' in args[1]
         assert kwargs['headers']['Accept-Language'] == 'fr'
@@ -160,13 +160,13 @@ class TestDataRetrieval:
 
     def test_should_request_system_metadata_dates_if_specified(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
-        self.client.get(type_name='Test', include_date_fields=True)
+        self.client.get(class_name='Test', include_date_fields=True)
         args, kwargs = self.client._http_client.request.call_args
         assert '&includeDateFields=true' in args[1]
 
     def test_should_not_request_system_metadata_dates_if_unspecified(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
-        self.client.get(type_name='Test')
+        self.client.get(class_name='Test')
         args, kwargs = self.client._http_client.request.call_args
         assert '&includeDateFields=true' not in args[1]
 

@@ -30,7 +30,7 @@ class InvalidInversePropertyError(SchemaError):
 class Schema:
     """In-memory representation of a DataGraphs domain model schema."""
 
-    ALL_DATATYPES = '__all_classes__'
+    ALL_CLASSES = '__all_classes__'
 
     # Class-level constant for datatype mappings
     DATATYPE_MAPPINGS = {

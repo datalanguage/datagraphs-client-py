@@ -161,7 +161,7 @@ class Client:
 
     def _get_data_url(
         self, 
-        type_name: str, 
+        class_name: str, 
         page_size: int, 
         lang: str, 
         include_date_fields: bool,
@@ -169,7 +169,7 @@ class Client:
         page_no: int = -1
     ) -> str:
         params = [
-            ('filter', f'type:{type_name}'),
+            ('filter', f'type:{class_name}'),
             ('lang', lang),
             ('pageSize', page_size),
             ('t', self._cache_buster()),
@@ -196,13 +196,13 @@ class Client:
         response = self._request(HTTP.GET, url, headers=self._get_headers())
         return response.get('api', 'unknown')
 
-    def get(self, type_name: str, lang: str = 'all', include_date_fields: bool = False) -> List[Dict[str, Any]]:
+    def get(self, class_name: str, lang: str = 'all', include_date_fields: bool = False) -> List[Dict[str, Any]]:
         """Retrieve all entities of a given type.
 
         Automatically paginates through all results.
 
         Args:
-            type_name: The entity type to fetch.
+            class_name: The entity class to fetch.
             lang: Language code for results (default ``'all'``).
             include_date_fields: Whether to include system date metadata.
 
@@ -212,7 +212,7 @@ class Client:
         page_no = 1
         resp = self._request(
             HTTP.GET, 
-            self._get_data_url(type_name, page_no=page_no, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields), 
+            self._get_data_url(class_name, page_no=page_no, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields), 
             headers=self._get_headers(lang)
         )
         if 'search' in resp:
@@ -222,9 +222,9 @@ class Client:
                 page_no += 1
                 if 'nextPageToken' in resp['search']:
                     next_page_token = resp['search']['nextPageToken']
-                    url = self._get_data_url(type_name, next_page_token=next_page_token, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields)
+                    url = self._get_data_url(class_name, next_page_token=next_page_token, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields)
                 else:
-                    url = self._get_data_url(type_name, page_no=page_no, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields)
+                    url = self._get_data_url(class_name, page_no=page_no, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields)
                 resp = self._request(HTTP.GET, url, headers=self._get_headers(lang))
                 if 'results' in resp:
                     data.extend(resp['results'])
@@ -366,14 +366,14 @@ class Client:
             self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=entities, headers=self._get_headers())
         return length
 
-    def delete(self, type_name: str, entity_id: str) -> None:
-        """Delete a single entity by type and ID.
+    def delete(self, class_name: str, entity_id: str) -> None:
+        """Delete a single entity by class and ID.
 
         Args:
-            type_name: The entity type.
+            class_name: The entity class.
             entity_id: The entity identifier.
         """
-        url = f'{self._base_url}{type_name}/{entity_id}'
+        url = f'{self._base_url}{class_name}/{entity_id}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
 

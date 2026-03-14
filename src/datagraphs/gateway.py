@@ -35,7 +35,7 @@ class Gateway:
     def client(self) -> DatagraphsClient:
         return self._client
 
-    def deploy_project(self, datasets: list[Dataset], with_prompt: bool = True) -> None:
+    def load_project(self, datasets: list[Dataset], with_prompt: bool = True) -> None:
         """Deploy the project schema and datasets to the API."""
         if self._validate_datasets(datasets, self._client.get_datasets(), with_prompt):
             self._client.tear_down()
@@ -48,8 +48,8 @@ class Gateway:
         existing_results = self._verify_datasets_against_classlist(existing_datasets, deployment_classes)
         deployment_results = self._verify_datasets_against_classlist(deployment_datasets, existing_results[0])
         if len(existing_results[1]) > 0 or len(deployment_results[1]) > 0:
-            warning_lines = [f'The class {m["type_name"]} was found in existing dataset {m["dataset_slug"]} but not in any deployment dataset.' for m in existing_results[1]]
-            warning_lines += [f'The class {m["type_name"]} was found in deployment dataset {m["dataset_slug"]} but not in any existing dataset.' for m in deployment_results[1]]
+            warning_lines = [f'The class {m["class_name"]} was found in existing dataset {m["dataset_slug"]} but not in any deployment dataset.' for m in existing_results[1]]
+            warning_lines += [f'The class {m["class_name"]} was found in deployment dataset {m["dataset_slug"]} but not in any existing dataset.' for m in deployment_results[1]]
             warning_message = 'Dataset validation found mismatches between deployment and existing datasets:\n' + '\n'.join(warning_lines)
             logger.warning(warning_message)
             if with_prompt:
@@ -63,13 +63,13 @@ class Gateway:
         """Validate that no duplicate class names are found across the provided datasets."""
         seen_classes: dict[str, str] = {}
         for dataset in datasets:
-            for type_name in dataset.classes:
-                if type_name in seen_classes:
+            for class_name in dataset.classes:
+                if class_name in seen_classes:
                     raise ValueError(
-                        f'Duplicate class {type_name} found in dataset {dataset.slug} '
-                        f'- already defined in dataset {seen_classes[type_name]}'
+                        f'Duplicate class {class_name} found in dataset {dataset.slug} '
+                        f'- already defined in dataset {seen_classes[class_name]}'
                     )
-                seen_classes[type_name] = dataset.slug
+                seen_classes[class_name] = dataset.slug
         return seen_classes.keys()
 
     def _verify_datasets_against_classlist(self, datasets: list[Dataset], classes: list[str]) -> None:
@@ -77,68 +77,68 @@ class Gateway:
         dataset_classes = set()
         for dataset in datasets:
             dataset_classes.update(dataset.classes)
-            for type_name in dataset.classes:
-                if type_name not in classes:
-                    missing_classes.append({'type_name': type_name, 'dataset_slug': dataset.slug})
+            for class_name in dataset.classes:
+                if class_name not in classes:
+                    missing_classes.append({'class_name': class_name, 'dataset_slug': dataset.slug})
         return dataset_classes, missing_classes
 
     def load_data(
         self,
-        datatype: str = Schema.ALL_DATATYPES,
+        class_name: str = Schema.ALL_CLASSES,
         from_dir_path: Union[str, Path] = "",
         file_path: Union[str, Path] = "",
     ) -> dict:
         """Load data from JSON files into the Datagraphs project.
 
         Args:
-            datatype: The class name to load, or ``Schema.ALL_DATATYPES`` to load every
+            class_name: The class name to load, or ``Schema.ALL_CLASSES`` to load every
                 non-base class found across all datasets.
             from_dir_path: Directory containing ``<ClassName>.json`` files.
             file_path: Explicit path to a single JSON file (used when loading a
-                specific *datatype*).
+                specific *class_name*).
 
         Returns:
             A dict with ``loaded`` and ``skipped`` counts.
 
         Raises:
             FileNotFoundError: If *file_path* is supplied but does not exist.
-            ValueError: If the requested *datatype* is not found in any dataset.
+            ValueError: If the requested *class_name* is not found in any dataset.
         """
         from_dir_path = Path(from_dir_path) if from_dir_path else Path()
         stats = {"loaded": 0, "skipped": 0}
 
         datasets = self._client.get_datasets()
         for dataset in datasets:
-            for type_name in dataset.classes:
-                if len(self._schema.find_subclasses(type_name)) == 0:
-                    if type_name == datatype:
+            for dataset_class in dataset.classes:
+                if len(self._schema.find_subclasses(dataset_class)) == 0:
+                    if dataset_class == class_name:
                         try:
-                            result = self._load_from_file(type_name, dataset.slug, from_dir_path, file_path)
+                            result = self._load_from_file(dataset_class, dataset.slug, from_dir_path, file_path)
                             stats["loaded"] += result["loaded"]
                             stats["skipped"] += result["skipped"]
                         except Exception as e:
-                            logger.error('Error loading data for %s: %s', type_name, str(e))
+                            logger.error('Error loading data for %s: %s', dataset_class, str(e))
                             stats["skipped"] += 1
                         return stats
-                    elif datatype == Schema.ALL_DATATYPES:
+                    elif class_name == Schema.ALL_CLASSES:
                         try:
-                            result = self._load_from_file(type_name, dataset.slug, from_dir_path)
+                            result = self._load_from_file(dataset_class, dataset.slug, from_dir_path)
                             stats["loaded"] += result["loaded"]
                             stats["skipped"] += result["skipped"]
                             time.sleep(self._wait_time_ms / 1000)
                         except Exception as e:
-                            logger.error('Error loading data for %s: %s', type_name, str(e))
+                            logger.error('Error loading data for %s: %s', dataset_class, str(e))
                             stats["skipped"] += 1
                 else:
-                    logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', type_name)
-        if datatype != Schema.ALL_DATATYPES:
-            logger.error('The class %s was not found in any dataset - cannot load data for this class.', datatype)
+                    logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
+        if class_name != Schema.ALL_CLASSES:
+            logger.error('The class %s was not found in any dataset - cannot load data for this class.', class_name)
             stats["skipped"] += 1
         return stats
 
     def _load_from_file(
         self,
-        type_name: str,
+        class_name: str,
         dataset_slug: str,
         from_dir_path: Union[str, Path] = "",
         file_path: Union[str, Path] = "",
@@ -151,14 +151,14 @@ class Gateway:
         Raises:
             FileNotFoundError: If *file_path* was explicitly provided but does not exist.
         """
-        json_file_path = Path(from_dir_path).joinpath(f'{type_name}.json') if not file_path else Path(file_path)
+        json_file_path = Path(from_dir_path).joinpath(f'{class_name}.json') if not file_path else Path(file_path)
         if json_file_path.is_file():
             logger.info('Reading data from %s...', json_file_path)
             with open(json_file_path, 'r', encoding='utf-8') as dataFile:
                 data = json.load(dataFile)
                 if len(data) > 0:
                     data = self._map_data_project_urns(data)
-                    logger.info('Writing data for %s...', type_name)
+                    logger.info('Writing data for %s...', class_name)
                     self._client.put(dataset_slug, data)
                     return {"loaded": len(data), "skipped": 0}
                 else:
@@ -200,13 +200,13 @@ class Gateway:
                 raise ValueError(f'Expected id property to be string - found type {type(entity['id'])}')
         return project_name
 
-    def dump_data(self, to_dir_path: Union[str, Path], datatype: str = Schema.ALL_DATATYPES, include_date_fields: bool = False) -> dict:
+    def dump_data(self, to_dir_path: Union[str, Path], class_name: str = Schema.ALL_CLASSES, include_date_fields: bool = False) -> dict:
         """Dump data from the Datagraphs project to JSON files on disk.
 
         Args:
             to_dir_path: Directory to write ``<ClassName>.json`` files into.
                 Created automatically if it does not exist.
-            datatype: The class name to dump, or ``Schema.ALL_DATATYPES`` for all.
+            class_name: The class name to dump, or ``Schema.ALL_CLASSES`` for all.
             include_date_fields: Whether to include date fields in the dumped data.
 
         Returns:
@@ -216,35 +216,35 @@ class Gateway:
         to_dir_path.mkdir(parents=True, exist_ok=True)
         stats = {"exported": 0}
 
-        if datatype == Schema.ALL_DATATYPES:
+        if class_name == Schema.ALL_CLASSES:
             datasets = self._client.get_datasets()
             for dataset in datasets:
-                for type_name in dataset.classes:
-                    if len(self._schema.find_subclasses(type_name)) == 0:   
+                for dataset_class in dataset.classes:
+                    if len(self._schema.find_subclasses(dataset_class)) == 0:   
                         try:
-                            result = self._persist_to_file(type_name, to_dir_path, include_date_fields)
+                            result = self._persist_to_file(dataset_class, to_dir_path, include_date_fields)
                             stats["exported"] += result
                             time.sleep(self._wait_time_ms / 1000)
                         except Exception as e:
-                            logger.error('Error exporting data for %s: %s', type_name, str(e))                     
+                            logger.error('Error exporting data for %s: %s', dataset_class, str(e))                     
         else:
             try:
-                result = self._persist_to_file(datatype, to_dir_path, include_date_fields)
+                result = self._persist_to_file(class_name, to_dir_path, include_date_fields)
                 stats["exported"] += result
             except Exception as e:
-                logger.error('Error exporting data for %s: %s', datatype, str(e))
+                logger.error('Error exporting data for %s: %s', class_name, str(e))
         return stats
 
-    def _persist_to_file(self, type_name: str, to_dir_path: Union[str, Path], include_date_fields: bool) -> int:
-        """Fetch entities of *type_name* from the API and write them to a JSON file.
+    def _persist_to_file(self, class_name: str, to_dir_path: Union[str, Path], include_date_fields: bool) -> int:
+        """Fetch entities of *class_name* from the API and write them to a JSON file.
 
         Args:
-            type_name: The class name to fetch.
+            class_name: The class name to fetch.
             to_dir_path: Target directory (must already exist).
         """
-        logger.info('Fetching data for %s...', type_name)
-        data = self._client.get(type_name=type_name, include_date_fields=include_date_fields)
-        file_path = Path(to_dir_path).joinpath(f'{type_name}.json')
+        logger.info('Fetching data for %s...', class_name)
+        data = self._client.get(class_name=class_name, include_date_fields=include_date_fields)
+        file_path = Path(to_dir_path).joinpath(f'{class_name}.json')
         with open(file_path, 'w', encoding='utf-8') as dataFile:
             json.dump(data, dataFile, indent=2)
         return len(data)

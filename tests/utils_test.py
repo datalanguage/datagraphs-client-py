@@ -2,8 +2,8 @@ import pytest
 from datagraphs.utils import *
 
 def test_should_get_type_from_urn():    
-    type_name = get_type_from_urn('urn:dg:Test:1234')
-    assert type_name == 'Test'
+    class_name = get_type_from_urn('urn:dg:Test:1234')
+    assert class_name == 'Test'
 
 def test_should_get_project_from_urn():    
     project_name = get_project_from_urn('urn:dg:Test:1234')
