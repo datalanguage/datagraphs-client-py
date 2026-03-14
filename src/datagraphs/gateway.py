@@ -5,11 +5,11 @@ import json
 import logging
 from pathlib import Path
 from typing import Union
-import warnings
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.schema import Schema
 from datagraphs.dataset import Dataset
 from datagraphs.utils import get_project_from_urn, map_project_name
+from datagraphs.enums import VALIDATION_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +35,18 @@ class Gateway:
     def client(self) -> DatagraphsClient:
         return self._client
 
-    def load_project(self, datasets: list[Dataset], with_prompt: bool = True) -> None:
+    def load_project(self, datasets: list[Dataset], validation_mode: VALIDATION_MODE = VALIDATION_MODE.PROMPT) -> None:
         """Deploy the project schema and datasets to the API."""
-        if self._validate_datasets(datasets, self._client.get_datasets(), with_prompt):
+        if self._validate_datasets(datasets, self._client.get_datasets(), validation_mode):
             self._client.tear_down()
             self._client.apply_schema(self._schema)
             self._client.apply_datasets(datasets)        
 
-    def _validate_datasets(self, deployment_datasets: list[Dataset], existing_datasets: list[Dataset], with_prompt: bool) -> None:
+    def _validate_datasets(self, deployment_datasets: list[Dataset], existing_datasets: list[Dataset], validation_mode: VALIDATION_MODE) -> None:
         """Validate that the local and API datasets match in terms of class names."""
+        if validation_mode == VALIDATION_MODE.BYPASS:
+            logger.warning('Validation mode set to BYPASS - skipping all dataset validations')
+            return True 
         deployment_classes = self._ensure_no_duplicate_classes(deployment_datasets)
         existing_results = self._verify_datasets_against_classlist(existing_datasets, deployment_classes)
         deployment_results = self._verify_datasets_against_classlist(deployment_datasets, existing_results[0])
@@ -52,7 +55,7 @@ class Gateway:
             warning_lines += [f'The class {m["class_name"]} was found in deployment dataset {m["dataset_slug"]} but not in any existing dataset.' for m in deployment_results[1]]
             warning_message = 'Dataset validation found mismatches between deployment and existing datasets:\n' + '\n'.join(warning_lines)
             logger.warning(warning_message)
-            if with_prompt:
+            if validation_mode == VALIDATION_MODE.PROMPT:
                 response = input(f'{warning_message}\nDo you wish to continue? (y/n): ').strip().lower()
                 return response == 'y'
             else:

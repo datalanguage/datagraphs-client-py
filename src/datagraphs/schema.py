@@ -4,7 +4,7 @@ import uuid
 import json
 import datetime
 from typing import Optional, Self, Union
-from datagraphs.datatypes import DATATYPE
+from datagraphs.enums import DATATYPE
 from datagraphs.utils import get_id_from_urn
 
 class SchemaError(Exception):

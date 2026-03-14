@@ -1,7 +1,7 @@
 import pytest
 from datagraphs.schema import Schema as DatagraphsSchema
 from datagraphs.schema import PropertyExistsError, InvalidInversePropertyError, SchemaError, ClassNotFoundError, PropertyNotFoundError
-from datagraphs.datatypes import DATATYPE
+from datagraphs.enums import DATATYPE
 
 class TestSchemaInitialization:
     def test_should_initialize_empty_schema(self):

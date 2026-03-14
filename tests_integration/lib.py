@@ -2,7 +2,7 @@ import os
 import yaml
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.gateway import Gateway as DatagraphsGateway 
-from datagraphs.datatypes import DATATYPE
+from datagraphs.enums import DATATYPE
 from datagraphs.schema import Schema as DatagraphsSchema
 from datagraphs.dataset import Dataset
 

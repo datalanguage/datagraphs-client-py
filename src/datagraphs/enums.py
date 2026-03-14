@@ -1,7 +1,4 @@
-"""Supported property datatypes for DataGraphs schemas."""
-
 from enum import StrEnum
-
 
 class DATATYPE(StrEnum):
     """Enumeration of property datatypes available in a DataGraphs schema."""
@@ -16,3 +13,8 @@ class DATATYPE(StrEnum):
     IMAGE_URL = 'imageUrl'
     ENUM = 'enum'
 
+class VALIDATION_MODE(StrEnum):
+    """Enumeration of validation modes for the DataGraphs project loading."""
+    PROMPT = 'prompt'
+    NO_PROMPT = 'no-prompt'
+    BYPASS = 'bypass'
