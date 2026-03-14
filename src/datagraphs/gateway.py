@@ -5,6 +5,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Union
+import warnings
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.schema import Schema
 from datagraphs.dataset import Dataset
@@ -33,6 +34,53 @@ class Gateway:
     @property
     def client(self) -> DatagraphsClient:
         return self._client
+
+    def deploy_project(self, datasets: list[Dataset], with_prompt: bool = True) -> None:
+        """Deploy the project schema and datasets to the API."""
+        if self._validate_datasets(datasets, self._client.get_datasets(), with_prompt):
+            self._client.tear_down()
+            self._client.apply_schema(self._schema)
+            self._client.apply_datasets(datasets)        
+
+    def _validate_datasets(self, deployment_datasets: list[Dataset], existing_datasets: list[Dataset], with_prompt: bool) -> None:
+        """Validate that the local and API datasets match in terms of class names."""
+        deployment_classes = self._ensure_no_duplicate_classes(deployment_datasets)
+        existing_results = self._verify_datasets_against_classlist(existing_datasets, deployment_classes)
+        deployment_results = self._verify_datasets_against_classlist(deployment_datasets, existing_results[0])
+        if len(existing_results[1]) > 0 or len(deployment_results[1]) > 0:
+            warning_lines = [f'The class {m["type_name"]} was found in existing dataset {m["dataset_slug"]} but not in any deployment dataset.' for m in existing_results[1]]
+            warning_lines += [f'The class {m["type_name"]} was found in deployment dataset {m["dataset_slug"]} but not in any existing dataset.' for m in deployment_results[1]]
+            warning_message = 'Dataset validation found mismatches between deployment and existing datasets:\n' + '\n'.join(warning_lines)
+            logger.warning(warning_message)
+            if with_prompt:
+                response = input(f'{warning_message}\nDo you wish to continue? (y/n): ').strip().lower()
+                return response == 'y'
+            else:
+                return True
+        return True
+
+    def _ensure_no_duplicate_classes(self, datasets: list[Dataset]) -> None:
+        """Validate that no duplicate class names are found across the provided datasets."""
+        seen_classes: dict[str, str] = {}
+        for dataset in datasets:
+            for type_name in dataset.classes:
+                if type_name in seen_classes:
+                    raise ValueError(
+                        f'Duplicate class {type_name} found in dataset {dataset.slug} '
+                        f'- already defined in dataset {seen_classes[type_name]}'
+                    )
+                seen_classes[type_name] = dataset.slug
+        return seen_classes.keys()
+
+    def _verify_datasets_against_classlist(self, datasets: list[Dataset], classes: list[str]) -> None:
+        missing_classes = []
+        dataset_classes = set()
+        for dataset in datasets:
+            dataset_classes.update(dataset.classes)
+            for type_name in dataset.classes:
+                if type_name not in classes:
+                    missing_classes.append({'type_name': type_name, 'dataset_slug': dataset.slug})
+        return dataset_classes, missing_classes
 
     def load_data(
         self,

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.7] - 2026-03-13
+
+### Added
+- Token-based pagination support in `Client.get()` for large data dumps
+- `Gateway.clear_down()` method to clear data from all datasets
+- `Gateway.client` property to expose the underlying API client
+- Logging to `Client.apply_schema()`, `Client.apply_datasets()`, `Client.clear_dataset()`, and `Client.tear_down()`
+
+### Changed
+- Re-added `pyyaml` dependency (bumped to `>=6.0.3`)
+- `Gateway.load_data()` now catches and logs errors per-type instead of aborting
+- `Gateway.dump_data()` now catches and logs errors per-type instead of aborting
+- `Gateway.load_data()` logs an error instead of raising `ValueError` when a class is not found in any dataset
+- Missing data file in `_load_from_file` now logs an error instead of raising `FileNotFoundError`
+
 ## [0.2.3] - 2026-03-12
 
 ### Fixed

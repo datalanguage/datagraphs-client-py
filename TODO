@@ -1,0 +1,5 @@
+- Improve property order handling
+- Add gateway deploy_project tests
+- Rename deploy_project to load project
+- Add dump_project to gateway
+- Consolidate class_name/type_name/datatype naming
