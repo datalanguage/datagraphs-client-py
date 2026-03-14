@@ -51,15 +51,19 @@ class Schema:
             schema = self._create_schema(project)
         else:
             self._validate_schema(schema)
-        if version:
-            schema['name'] = f"{name or 'Domain Model'} v{version}"
+        schema['name'] = f"{name or 'Domain Model'} v{version}"
         schema['lastModifiedDate'] = datetime.datetime.now(datetime.UTC).isoformat()
+        self._version = version
         self._schema = schema
 
     @property
     def classes(self) -> list[dict]:
         return self._schema["classes"]
 
+    @property
+    def version(self) -> str:
+        return self._version
+    
     @staticmethod
     def _create_schema(project: str) -> dict:
         guid = uuid.uuid4().hex

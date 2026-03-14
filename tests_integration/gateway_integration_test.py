@@ -1,6 +1,7 @@
 import pytest
 import json
 import os
+from datagraphs.enums import VALIDATION_MODE
 from lib import get_client, get_data, get_datasets, get_gateway, get_schema
 
 def write_json(data: list[dict], filename: str, folder: str = './') -> None:
@@ -23,7 +24,35 @@ def delete_file(file_path) -> None:
     if os.path.isfile(file_path):
         os.remove(file_path)
 
-class TestGateway:
+class TestGatewayProjectOperations:
+
+    @pytest.fixture(scope="class",autouse=True)
+    def setup(self, request):
+        request.cls.gateway = get_gateway('integration-testing')
+        yield
+        delete_file('./pydg-v1.0-schema.json')
+        delete_file('./pydg-v1.0-datasets.json')
+
+    def test_should_load_project(self) -> None:
+        self.gateway.load_project(get_datasets(), VALIDATION_MODE.BYPASS)
+        schema = self.gateway.client.get_schema()
+        assert len(schema.classes) == len(get_schema().classes)
+        datasets = self.gateway.client.get_datasets()
+        assert [dataset.name for dataset in datasets] == [dataset.name for dataset in get_datasets()]
+        assert [dataset.classes for dataset in datasets] == [dataset.classes for dataset in get_datasets()]
+
+    def test_should_dump_project(self) -> None:
+        client = get_client('integration-testing')
+        client.apply_schema(get_schema())
+        client.tear_down() 
+        client.apply_datasets(get_datasets())
+        self.gateway.dump_project(schema_path='./', datasets_path='./')
+        schema = read_json('pydg-v1.0-schema')
+        assert len(schema['classes']) == len(get_schema().classes)
+        datasets = read_json('pydg-v1.0-datasets')
+        assert len(datasets) == len(get_datasets())
+
+class TestGatewayDataOperations:
 
     @pytest.fixture(scope="class",autouse=True)
     def setup(self, request):

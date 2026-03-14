@@ -85,6 +85,27 @@ class Gateway:
                     missing_classes.append({'class_name': class_name, 'dataset_slug': dataset.slug})
         return dataset_classes, missing_classes
 
+    def dump_project(self, schema_path: Union[str, Path], datasets_path: Union[str, Path]) -> None:
+        """Dump the project schema and datasets to the filesystem."""
+        name_prefix = f'{self._client.project_name}-v{self._schema.version}'
+        self._dump_schema(schema_path, name_prefix)
+        self._dump_datasets(datasets_path, name_prefix)
+
+    def _dump_schema(self, schema_path: Union[str, Path], name_prefix: str) -> None:
+        """Dump the project schema to a JSON file."""
+        schema_path = Path(schema_path) / f'{name_prefix}-schema.json'
+        schema = self._client.get_schema()  
+        with open(schema_path, 'w', encoding='utf-8') as schema_file:
+            json.dump(schema.to_dict(), schema_file, indent=2)
+    
+    def _dump_datasets(self, datasets_path: Union[str, Path], name_prefix: str) -> None:
+        """Dump the project datasets to JSON files."""
+        datasets_path = Path(datasets_path) / f'{name_prefix}-datasets.json'
+        datasets = self._client.get_datasets()
+        json_data = [dataset.to_dict() for dataset in datasets]
+        with open(datasets_path, 'w', encoding='utf-8') as data_file:
+            json.dump(json_data, data_file, indent=2)
+
     def load_data(
         self,
         class_name: str = Schema.ALL_CLASSES,

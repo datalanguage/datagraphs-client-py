@@ -344,6 +344,82 @@ class TestLoadProject:
         assert mock_client.apply_datasets.call_count == 1    
 
 
+class TestDumpProject:
+
+    def setup_method(self):
+        WORKING_DIR.mkdir(exist_ok=True)
+        for file in WORKING_DIR.iterdir():
+            if file.is_file():
+                file.unlink()
+
+    def test_should_dump_schema_and_datasets_to_files(self, gateway, mock_client, mock_schema):
+        mock_schema.version = '2.0'
+        mock_client.project_name = 'my-project'
+        mock_client.get_schema.return_value = MagicMock(to_dict=lambda: {'name': 'test-schema'})
+        datasets = [Dataset(name='DS1', project='my-project', classes=['TypeA'])]
+        mock_client.get_datasets.return_value = datasets
+        gateway.dump_project(schema_path=str(WORKING_DIR), datasets_path=str(WORKING_DIR))
+        schema_file = WORKING_DIR / 'my-project-v2.0-schema.json'
+        datasets_file = WORKING_DIR / 'my-project-v2.0-datasets.json'
+        assert schema_file.exists()
+        assert datasets_file.exists()
+        with open(schema_file, 'r', encoding='utf-8') as f:
+            assert json.load(f) == {'name': 'test-schema'}
+        with open(datasets_file, 'r', encoding='utf-8') as f:
+            written_datasets = json.load(f)
+            assert len(written_datasets) == 1
+            assert written_datasets[0] == datasets[0].to_dict()
+
+    def test_should_use_project_name_and_schema_version_in_filenames(self, gateway, mock_client, mock_schema):
+        mock_schema.version = '3.1'
+        mock_client.project_name = 'acme-corp'
+        mock_client.get_schema.return_value = MagicMock(to_dict=lambda: {})
+        mock_client.get_datasets.return_value = []
+        gateway.dump_project(schema_path=str(WORKING_DIR), datasets_path=str(WORKING_DIR))
+        assert (WORKING_DIR / 'acme-corp-v3.1-schema.json').exists()
+        assert (WORKING_DIR / 'acme-corp-v3.1-datasets.json').exists()
+
+    def test_should_dump_multiple_datasets(self, gateway, mock_client, mock_schema):
+        mock_schema.version = '1.0'
+        mock_client.project_name = 'test-project'
+        mock_client.get_schema.return_value = MagicMock(to_dict=lambda: {})
+        ds1 = Dataset(name='DS1', project='test-project', classes=['TypeA'])
+        ds2 = Dataset(name='DS2', project='test-project', classes=['TypeB'])
+        mock_client.get_datasets.return_value = [ds1, ds2]
+
+        gateway.dump_project(schema_path=str(WORKING_DIR), datasets_path=str(WORKING_DIR))
+
+        datasets_file = WORKING_DIR / 'test-project-v1.0-datasets.json'
+        with open(datasets_file, 'r', encoding='utf-8') as f:
+            written_datasets = json.load(f)
+            assert len(written_datasets) == 2
+            assert written_datasets[0] == ds1.to_dict()
+            assert written_datasets[1] == ds2.to_dict()
+
+    def test_should_dump_empty_datasets_list(self, gateway, mock_client, mock_schema):
+        mock_schema.version = '1.0'
+        mock_client.project_name = 'test-project'
+        mock_client.get_schema.return_value = MagicMock(to_dict=lambda: {})
+        mock_client.get_datasets.return_value = []
+
+        gateway.dump_project(schema_path=str(WORKING_DIR), datasets_path=str(WORKING_DIR))
+
+        datasets_file = WORKING_DIR / 'test-project-v1.0-datasets.json'
+        with open(datasets_file, 'r', encoding='utf-8') as f:
+            assert json.load(f) == []
+
+    def test_should_accept_path_objects(self, gateway, mock_client, mock_schema):
+        mock_schema.version = '1.0'
+        mock_client.project_name = 'test-project'
+        mock_client.get_schema.return_value = MagicMock(to_dict=lambda: {'v': 1})
+        mock_client.get_datasets.return_value = []
+
+        gateway.dump_project(schema_path=WORKING_DIR, datasets_path=WORKING_DIR)
+
+        assert (WORKING_DIR / 'test-project-v1.0-schema.json').exists()
+        assert (WORKING_DIR / 'test-project-v1.0-datasets.json').exists()
+
+
 class TestGatewayEndToEnd:
 
     def setup_method(self):
