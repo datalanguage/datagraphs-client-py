@@ -303,41 +303,41 @@ class TestMapDataProjectUrns:
 
 class TestLoadProject:
     
-    def test_should_load_project_with_no_validation(self, gateway, mock_client):
+    def test_should_load_project_with_no_validation(self, gateway, mock_client, mock_schema):
         datasets = [Dataset(name='Test', project='test', classes=['ClassC'])]
-        gateway.load_project(datasets, validation_mode=VALIDATION_MODE.BYPASS)
+        gateway.load_project(mock_schema, datasets, validation_mode=VALIDATION_MODE.BYPASS)
         assert mock_client.tear_down.call_count == 1
         assert mock_client.apply_schema.call_count == 1
         assert mock_client.apply_datasets.call_count == 1
 
-    def test_should_catch_duplicate_classes_in_datasets(self, gateway, mock_client):
+    def test_should_catch_duplicate_classes_in_datasets(self, gateway, mock_client, mock_schema):
         datasets = [
             Dataset(name='Test1', project='test', classes=['ClassC']),
             Dataset(name='Test2', project='test', classes=['ClassC'])
         ]
         with pytest.raises(ValueError, match='Duplicate class ClassC found in dataset test2'):
-            gateway.load_project(datasets, validation_mode=VALIDATION_MODE.NO_PROMPT)
+            gateway.load_project(mock_schema, datasets, validation_mode=VALIDATION_MODE.NO_PROMPT)
 
-    def test_should_prompt_user_on_dataset_mismatch_if_validation_mode_is_prompt(self, gateway, mock_client, caplog):
+    def test_should_prompt_user_on_dataset_mismatch_if_validation_mode_is_prompt(self, gateway, mock_client, mock_schema, caplog):
         new_dataset = Dataset(name='New', project='test', classes=['NewClass'])
         with patch('builtins.input', return_value='y'), caplog.at_level(logging.WARNING):
-            gateway.load_project([new_dataset], validation_mode=VALIDATION_MODE.PROMPT)
+            gateway.load_project(mock_schema, [new_dataset], validation_mode=VALIDATION_MODE.PROMPT)
         assert 'Dataset validation found mismatches' in caplog.text
         assert mock_client.tear_down.call_count == 1
         assert mock_client.apply_schema.call_count == 1
         assert mock_client.apply_datasets.call_count == 1    
 
-    def test_should_not_prompt_user_on_dataset_mismatch_if_validation_mode_is_no_prompt(self, gateway, mock_client, caplog):
+    def test_should_not_prompt_user_on_dataset_mismatch_if_validation_mode_is_no_prompt(self, gateway, mock_client, mock_schema, caplog):
         new_dataset = Dataset(name='New', project='test', classes=['NewClass'])
-        gateway.load_project([new_dataset], validation_mode=VALIDATION_MODE.NO_PROMPT)
+        gateway.load_project(mock_schema, [new_dataset], validation_mode=VALIDATION_MODE.NO_PROMPT)
         assert 'Dataset validation found mismatches' in caplog.text
         assert mock_client.tear_down.call_count == 1
         assert mock_client.apply_schema.call_count == 1
         assert mock_client.apply_datasets.call_count == 1    
 
-    def test_should_not_prompt_user_if_no_dataset_mismatch(self, gateway, mock_client, caplog):
+    def test_should_not_prompt_user_if_no_dataset_mismatch(self, gateway, mock_client, mock_schema, caplog):
         new_dataset = Dataset(name='Test', project='test', classes=['ClassA', 'ClassB'])
-        gateway.load_project([new_dataset], validation_mode=VALIDATION_MODE.PROMPT)
+        gateway.load_project(mock_schema, [new_dataset], validation_mode=VALIDATION_MODE.PROMPT)
         assert not caplog.text
         assert mock_client.tear_down.call_count == 1
         assert mock_client.apply_schema.call_count == 1

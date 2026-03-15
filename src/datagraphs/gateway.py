@@ -19,7 +19,7 @@ class Gateway:
     DEFAULT_WAIT_TIME_MS = 200
     UNKNOWN_PROJECT_NAME = '__unknown__'
 
-    def __init__(self, client: DatagraphsClient, schema: Schema, wait_time_ms: int = DEFAULT_WAIT_TIME_MS) -> None:
+    def __init__(self, client: DatagraphsClient, schema: Schema = None, wait_time_ms: int = DEFAULT_WAIT_TIME_MS) -> None:
         """Initialise the Gateway.
 
         Args:
@@ -35,11 +35,11 @@ class Gateway:
     def client(self) -> DatagraphsClient:
         return self._client
 
-    def load_project(self, datasets: list[Dataset], validation_mode: VALIDATION_MODE = VALIDATION_MODE.PROMPT) -> None:
+    def load_project(self, schema: Schema, datasets: list[Dataset], validation_mode: VALIDATION_MODE = VALIDATION_MODE.PROMPT) -> None:
         """Deploy the project schema and datasets to the API."""
         if self._validate_datasets(datasets, self._client.get_datasets(), validation_mode):
             self._client.tear_down()
-            self._client.apply_schema(self._schema)
+            self._client.apply_schema(schema)
             self._client.apply_datasets(datasets)        
 
     def _validate_datasets(self, deployment_datasets: list[Dataset], existing_datasets: list[Dataset], validation_mode: VALIDATION_MODE) -> None:

@@ -34,7 +34,7 @@ class TestGatewayProjectOperations:
         delete_file('./pydg-v1.0-datasets.json')
 
     def test_should_load_project(self) -> None:
-        self.gateway.load_project(get_datasets(), VALIDATION_MODE.BYPASS)
+        self.gateway.load_project(get_schema(), get_datasets(), VALIDATION_MODE.BYPASS)
         schema = self.gateway.client.get_schema()
         assert len(schema.classes) == len(get_schema().classes)
         datasets = self.gateway.client.get_datasets()
