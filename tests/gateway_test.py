@@ -39,18 +39,19 @@ def mock_schema():
 
 @pytest.fixture
 def gateway(mock_client, mock_schema):
-    return DatagraphsGateway(mock_client, mock_schema, wait_time_ms=0)
+    mock_client.get_schema.return_value = mock_schema
+    return DatagraphsGateway(mock_client, wait_time_ms=0)
 
 class TestInit:
 
-    def test_should_initialize_with_default_wait_time(self, mock_client, mock_schema):
-        gateway = DatagraphsGateway(mock_client, mock_schema)
+    def test_should_initialize_with_default_wait_time(self, mock_client):
+        gateway = DatagraphsGateway(mock_client)
         assert gateway._client is mock_client
-        assert gateway._schema is mock_schema
+        assert gateway._schema is None
         assert gateway._wait_time_ms == DatagraphsGateway.DEFAULT_WAIT_TIME_MS
 
-    def test_should_initialize_with_custom_wait_time(self, mock_client, mock_schema):
-        gateway = DatagraphsGateway(mock_client, mock_schema, wait_time_ms=500)
+    def test_should_initialize_with_custom_wait_time(self, mock_client):
+        gateway = DatagraphsGateway(mock_client, wait_time_ms=500)
         assert gateway._wait_time_ms == 500
 
     def test_client_property(self, gateway, mock_client):
@@ -88,7 +89,7 @@ class TestDumpData:
     def test_should_skip_baseclasses_when_dumping_all(self, gateway, mock_client, mock_schema):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['BaseClass', 'SubstanceRole'])
         mock_client.get_datasets.return_value = [dataset]
-        mock_schema.find_subclasses.side_effect = lambda name: [{'label': 'Child'}] if name == 'BaseClass' else []
+        mock_schema.find_subclasses.side_effect = lambda name: [{'name': 'Child'}] if name == 'BaseClass' else []
         mock_client.get.return_value = []
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
         mock_client.get.assert_called_once()
@@ -167,7 +168,7 @@ class TestLoadData:
     def test_should_skip_baseclasses_when_loading_all(self, gateway, mock_client, mock_schema, substance_role_data):
         dataset = Dataset(name='Test', project='test', classes=['BaseType', 'SubstanceRole'])
         mock_client.get_datasets.return_value = [dataset]
-        mock_schema.find_subclasses.side_effect = lambda name: [{'label': 'Child'}] if name == 'BaseType' else []
+        mock_schema.find_subclasses.side_effect = lambda name: [{'name': 'Child'}] if name == 'BaseType' else []
         with patch.object(Path, 'is_file', return_value=True), \
              patch('builtins.open', mock_open(read_data=json.dumps(substance_role_data))):
             gateway.load_data(from_dir_path=str(DATA_DIR))
@@ -219,7 +220,7 @@ class TestLoadData:
     def test_should_log_baseclass_info(self, gateway, mock_client, mock_schema, caplog):
         dataset = Dataset(name='Test', project='test', classes=['BaseType'])
         mock_client.get_datasets.return_value = [dataset]
-        mock_schema.find_subclasses.return_value = [{'label': 'Child'}]
+        mock_schema.find_subclasses.return_value = [{'name': 'Child'}]
         with caplog.at_level(logging.INFO):
             gateway.load_data()
         assert 'baseclass' in caplog.text
@@ -353,11 +354,12 @@ class TestDumpProject:
                 file.unlink()
 
     def test_should_dump_schema_and_datasets_to_files(self, gateway, mock_client, mock_schema):
-        mock_schema.version = '2.0'
+        schema_mock = MagicMock(version='2.0', to_dict=lambda: {'name': 'test-schema'})
+        mock_client.get_schema.return_value = schema_mock
         mock_client.project_name = 'my-project'
-        mock_client.get_schema.return_value = MagicMock(to_dict=lambda: {'name': 'test-schema'})
         datasets = [Dataset(name='DS1', project='my-project', classes=['TypeA'])]
         mock_client.get_datasets.return_value = datasets
+        gateway._schema = None
         gateway.dump_project(schema_path=str(WORKING_DIR), datasets_path=str(WORKING_DIR))
         schema_file = WORKING_DIR / 'my-project-v2.0-schema.json'
         datasets_file = WORKING_DIR / 'my-project-v2.0-datasets.json'
@@ -371,21 +373,23 @@ class TestDumpProject:
             assert written_datasets[0] == datasets[0].to_dict()
 
     def test_should_use_project_name_and_schema_version_in_filenames(self, gateway, mock_client, mock_schema):
-        mock_schema.version = '3.1'
+        schema_mock = MagicMock(version='3.1', to_dict=lambda: {})
+        mock_client.get_schema.return_value = schema_mock
         mock_client.project_name = 'acme-corp'
-        mock_client.get_schema.return_value = MagicMock(to_dict=lambda: {})
         mock_client.get_datasets.return_value = []
+        gateway._schema = None
         gateway.dump_project(schema_path=str(WORKING_DIR), datasets_path=str(WORKING_DIR))
         assert (WORKING_DIR / 'acme-corp-v3.1-schema.json').exists()
         assert (WORKING_DIR / 'acme-corp-v3.1-datasets.json').exists()
 
     def test_should_dump_multiple_datasets(self, gateway, mock_client, mock_schema):
-        mock_schema.version = '1.0'
+        schema_mock = MagicMock(version='1.0', to_dict=lambda: {})
+        mock_client.get_schema.return_value = schema_mock
         mock_client.project_name = 'test-project'
-        mock_client.get_schema.return_value = MagicMock(to_dict=lambda: {})
         ds1 = Dataset(name='DS1', project='test-project', classes=['TypeA'])
         ds2 = Dataset(name='DS2', project='test-project', classes=['TypeB'])
         mock_client.get_datasets.return_value = [ds1, ds2]
+        gateway._schema = None
 
         gateway.dump_project(schema_path=str(WORKING_DIR), datasets_path=str(WORKING_DIR))
 
@@ -397,10 +401,11 @@ class TestDumpProject:
             assert written_datasets[1] == ds2.to_dict()
 
     def test_should_dump_empty_datasets_list(self, gateway, mock_client, mock_schema):
-        mock_schema.version = '1.0'
+        schema_mock = MagicMock(version='1.0', to_dict=lambda: {})
+        mock_client.get_schema.return_value = schema_mock
         mock_client.project_name = 'test-project'
-        mock_client.get_schema.return_value = MagicMock(to_dict=lambda: {})
         mock_client.get_datasets.return_value = []
+        gateway._schema = None
 
         gateway.dump_project(schema_path=str(WORKING_DIR), datasets_path=str(WORKING_DIR))
 
@@ -409,10 +414,11 @@ class TestDumpProject:
             assert json.load(f) == []
 
     def test_should_accept_path_objects(self, gateway, mock_client, mock_schema):
-        mock_schema.version = '1.0'
+        schema_mock = MagicMock(version='1.0', to_dict=lambda: {'v': 1})
+        mock_client.get_schema.return_value = schema_mock
         mock_client.project_name = 'test-project'
-        mock_client.get_schema.return_value = MagicMock(to_dict=lambda: {'v': 1})
         mock_client.get_datasets.return_value = []
+        gateway._schema = None
 
         gateway.dump_project(schema_path=WORKING_DIR, datasets_path=WORKING_DIR)
 

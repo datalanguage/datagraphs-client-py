@@ -1,0 +1,200 @@
+{
+  "id": "urn:models:d4ebdfae3e964fc5b18abeb3157b0062",
+  "guid": "d4ebdfae3e964fc5b18abeb3157b0062",
+  "name": "Agriguide Domain Model v1.1.1",
+  "account": "dlc-template",
+  "project": "urn:dlc-template:projects:croplife-dlc",
+  "createdDate": "2022-11-24T10:05:14.569Z",
+  "lastModifiedDate": "2026-01-23T15:34:44.729704+00:00",
+  "classes": [
+    {
+      "id": "urn:models:42SNVd2Vlmv5E8EuQEEQK6:classes:Address",
+      "guid": "4vo55jkB9J7k07reDhadXR",
+      "model": "urn:models:42SNVd2Vlmv5E8EuQEEQK6",
+      "project": "urn:croplife-eu:projects:dlc-v1",
+      "label": "Address",
+      "labelProperty": "internalLabel",
+      "createdDate": "2022-11-24T14:46:43.654Z",
+      "lastModifiedDate": "2022-11-28T12:01:34.702Z",
+      "parentClasses": [
+        "Address"
+      ],
+      "identifierProperty": "id",
+      "objectProperties": [
+        {
+          "propertyName": "internalLabel",
+          "isOptional": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "propertyOrder": 0,
+          "isArray": false,
+          "isNestedObject": false,
+          "guid": "6kOMonNFF4JrZ3qN8mLeDi",
+          "id": "urn:models:42SNVd2Vlmv5E8EuQEEQK6:classes:Address:label",
+          "isLangString": true,
+          "propertyDescription": ""
+        },
+        {
+          "propertyName": "building",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "3fb1f7111fda48c5b6a4105f84820da3",
+          "propertyOrder": 1,
+          "id": "urn:models:42uoICoPEzBPZ77fd3kT4S:classes:Address:building",
+          "isLangString": false,
+          "propertyDescription": "The building in an address"
+        },
+        {
+          "propertyName": "street",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "0ab55035f9e04efe9f4f31a4dc900f6e",
+          "propertyOrder": 2,
+          "id": "urn:models:42uoICoPEzBPZ77fd3kT4S:classes:Address:street",
+          "isLangString": false,
+          "propertyDescription": "The street of the address"
+        },
+        {
+          "propertyName": "town",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "f50657fb6e76474ab8a3e9c5316721f0",
+          "propertyOrder": 3,
+          "id": "urn:models:42uoICoPEzBPZ77fd3kT4S:classes:Address:town",
+          "isLangString": false,
+          "propertyDescription": "The town of the address"
+        },
+        {
+          "propertyName": "district",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+{
+  "name": "Agriguide Domain Model v1.1.1",
+  "createdDate": "2023-10-17T15:08:11.252Z",
+  "lastModifiedDate": "2026-02-02T16:33:23.971Z",
+  "classes": [
+    {
+      "type": "Class",
+      "name": "ActiveIngredientTotalDosageExpression",
+      "labelProperty": "internalLabel",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "internalLabel",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "ObjectProperty",
+          "name": "totalDosageExpression",
+          "description": {
+            "en": "The total dosage expression",
+            "@none": "The total dosage expression"
+          },
+          "range": "Dosage",
+          "isOptional": true,
+          "isArray": false,
+          "isNestedObject": true,
+          "inferLocation": false,
+          "isLabelSynonym": false,
+          "isFilterable": true,
+          "isSymmetric": false
+        },
+        {
+          "type": "ObjectProperty",
+          "name": "activeIngredient",
+          "description": {
+            "en": "The active ingredient to which the specific dosage limit applies",
+            "@none": "The active ingredient to which the specific dosage limit applies"
+          },
+          "range": "Substance",
+          "isOptional": true,
+          "isArray": false,
+          "isNestedObject": false,
+          "inferLocation": false,
+          "isLabelSynonym": false,
+          "isFilterable": true,
+          "isSymmetric": false
+        }
+      ],
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "Address",
+      "labelProperty": "internalLabel",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "internalLabel",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "building",
+          "description": {
+            "en": "The building in an address",
+            "@none": "The building in an address"
+          },
+          "range": "text",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "street",
+          "description": {
+            "en": "The street of the address",
+            "@none": "The street of the address"
+          },
+          "range": "text",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },

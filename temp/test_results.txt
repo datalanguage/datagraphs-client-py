@@ -1,0 +1,15 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.5, pytest-8.4.1, pluggy-1.6.0
+rootdir: /Users/julianeverett/Development/workspace/datalanguage/datagraphs-client-py
+configfile: pyproject.toml
+plugins: mock-3.15.1, cov-7.0.0
+collected 161 items
+
+tests/client_test.py .............................................       [ 27%]
+tests/dataset_test.py .......                                            [ 32%]
+tests/gateway_test.py .......................................            [ 56%]
+tests/schema_test.py ................................................... [ 88%]
+............                                                             [ 95%]
+tests/utils_test.py .......                                              [100%]
+
+============================= 161 passed in 0.25s ==============================

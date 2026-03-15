@@ -391,22 +391,18 @@ class TestSchemaOperations:
     def test_should_apply_schema_to_project(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
         schema_data = {
-            "id": "urn:models:123",
-            "guid": "123",
-            "type": "DomainModel",
             "name": "Domain Model",
-            "description": "",
-            "project": "urn:datagraphs:project",
-            "createdDate": "",
-            "lastModifiedDate": "",
+            "createdDate": "2024-06-01T00:00:00Z",
+            "lastModifiedDate": "2024-06-01T00:00:00Z",
             "classes": []
         }
         self.client.apply_schema(DatagraphsSchema(schema_data))
         args, kwargs = self.client._http_client.request.call_args
         assert args[0] == "put"
         assert args[1].startswith("https://api.datagraphs.io/test_project/models/_active")
-        assert json.loads(kwargs['data'])['id'] == schema_data['id']
-        assert json.loads(kwargs['data'])['type'] == schema_data['type']
+        sent_data = json.loads(kwargs['data'])
+        assert sent_data['name'] == schema_data['name']
+        assert sent_data['classes'] == []
 
 class TestDatasetOperations:
 

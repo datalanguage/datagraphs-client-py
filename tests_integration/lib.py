@@ -11,8 +11,7 @@ config_file_location = os.path.join(current_folder, '.app.config.yml')
 
 def get_gateway(config_key: str) -> DatagraphsGateway:
     client = get_client(config_key)
-    schema = get_schema()
-    gateway = DatagraphsGateway(client, schema)
+    gateway = DatagraphsGateway(client)
     return gateway
 
 def get_client(config_key: str) -> DatagraphsClient:

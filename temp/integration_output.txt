@@ -1,0 +1,52 @@
+Step 1: Building comprehensive schema...
+  Saved old format to /Users/julianeverett/Development/workspace/datalanguage/datagraphs-client-py/tests_integration/../temp/comprehensive_old_schema.json
+  Classes: 11
+    SimpleClass: 1 properties
+    DescribedClass: 1 properties
+    NonLangStringClass: 1 properties
+    AllDatatypes: 12 properties
+    PropertyFlags: 7 properties
+    ReferencedClass: 3 properties
+    ObjectPropertyClass: 5 properties
+    InversePropertyClass: 2 properties
+    ParentClass: 3 properties
+    ChildClass: 4 properties
+    AutogenClass: 2 properties
+
+Step 2: Writing schema to API...
+  Schema applied successfully
+
+Step 3: Reading schema back from API...
+  Saved new format to /Users/julianeverett/Development/workspace/datalanguage/datagraphs-client-py/tests_integration/../temp/comprehensive_new_schema.json
+  Classes: 11
+    AllDatatypes: 12 properties
+    AutogenClass: 2 properties
+    ChildClass: 4 properties
+    DescribedClass: 1 properties
+    InversePropertyClass: 2 properties
+    NonLangStringClass: 1 properties
+    ObjectPropertyClass: 5 properties
+    ParentClass: 3 properties
+    PropertyFlags: 7 properties
+    ReferencedClass: 3 properties
+    SimpleClass: 1 properties
+
+Step 4: Comparing class counts...
+  Both have 11 classes ✓
+
+Step 5: Comparing property counts per class...
+  SimpleClass: old=1 new=1 ✓
+  DescribedClass: old=1 new=1 ✓
+  NonLangStringClass: old=1 new=1 ✓
+  AllDatatypes: old=12 new=12 ✓
+  PropertyFlags: old=7 new=7 ✓
+  ReferencedClass: old=3 new=3 ✓
+  ObjectPropertyClass: old=5 new=5 ✓
+  InversePropertyClass: old=2 new=2 ✓
+  ParentClass: old=3 new=3 ✓
+  ChildClass: old=4 new=4 ✓
+  AutogenClass: old=2 new=2 ✓
+
+✓ Done! Both formats saved to temp/
+  Old format (current Schema output): /Users/julianeverett/Development/workspace/datalanguage/datagraphs-client-py/tests_integration/../temp/comprehensive_old_schema.json
+  New format (API response):          /Users/julianeverett/Development/workspace/datalanguage/datagraphs-client-py/tests_integration/../temp/comprehensive_new_schema.json

@@ -1,0 +1,172 @@
+=== NEW SCHEMA ===
+Top keys: ['name', 'createdDate', 'lastModifiedDate', 'classes']
+Num classes: 141
+
+--- subClassOf ---
+  AgriculturalTarget extends Target
+  Angle extends Quantity
+  AngleUnit extends UnitOfMeasurement
+  Application extends IntermediaryApplication
+  ApplicationOptions extends BaseApplication
+  ApplicationSequence extends IntermediaryApplication
+  ClpControlledHazardReference extends HazardStatement
+  ClpControlledPrecautionReference extends Precaution
+  ComplexUnit extends UnitOfMeasurement
+  Concentration extends Quantity
+  ConcentrationUnit extends UnitOfMeasurement
+  CropLifecycleEvent extends LifecycleEvent
+  DangerousIngredientsHazardStatement extends HazardStatement
+  Density extends Quantity
+  DensityUnit extends UnitOfMeasurement
+  Distance extends Quantity
+  DistanceUnit extends UnitOfMeasurement
+  Dosage extends Quantity
+  DosageUnit extends UnitOfMeasurement
+  Duration extends Quantity
+  DurationUnit extends UnitOfMeasurement
+  FungalLifecycleEvent extends LifecycleEvent
+  FungalLifecycleStage extends LifecycleStage
+  GeneralLifecycleEvent extends LifecycleEvent
+  GeneralLifecycleStage extends LifecycleStage
+  InsectLifecycleEvent extends LifecycleEvent
+  IntermediaryApplication extends BaseApplication
+  LandUseTarget extends Target
+  ManufacturerHazardStatement extends HazardStatement
+  ManufacturerPrecaution extends Precaution
+  Mass extends Quantity
+  MassUnit extends UnitOfMeasurement
+  NonPersistentIdentifier extends Identifier
+  Percentage extends Quantity
+  PercentageUnit extends UnitOfMeasurement
+  PersistentIdentifier extends Identifier
+  PestLifecycleStage extends LifecycleStage
+  PlantDensity extends Quantity
+  PlantDensityUnit extends UnitOfMeasurement
+  PlantLifecycleStage extends LifecycleStage
+  Pressure extends Quantity
+  PressureUnit extends UnitOfMeasurement
+  RegulatorControlledHazardReference extends HazardStatement
+  RegulatorControlledPrecautionReference extends Precaution
+  RegulatorHazardStatement extends HazardStatement
+  RegulatorPrecaution extends Precaution
+  SafetyInterval extends Interval
+  SeedRateUnit extends UnitOfMeasurement
+  SeedingRate extends Quantity
+  SprayingDirection extends SprayingApplication
+  TargetFungus extends TargetPest
+  TargetInsect extends TargetPest
+  TargetMollusc extends TargetPest
+  TargetNematode extends TargetPest
+  TargetWeed extends TargetPest
+  Temperature extends Quantity
+  TemperatureUnit extends UnitOfMeasurement
+  Velocity extends Quantity
+  VelocityUnit extends UnitOfMeasurement
+  Volume extends Quantity
+  VolumeUnit extends UnitOfMeasurement
+  WeedLifecycleEvent extends LifecycleEvent
+
+--- inverseOf ---
+  Country.packagingDisposalOrganisations inverseOf=country
+  GrowthStage.descriptions inverseOf=growthStage
+  Organism.childOrganisms inverseOf=parentOrganisms
+  RegisteredFormulation.productPackage inverseOf=formulation
+
+--- validationRules (enums) ---
+
+--- isAbstract=True ---
+
+--- propertyValuePattern ---
+  ClpControlledHazardStatement.label -> {code}
+  ClpControlledPrecaution.label -> {code}
+  GrowthStage.label -> {code}
+  Identifier.internalLabel -> {hasValue}
+  NonPersistentIdentifier.internalLabel -> {hasValue}
+  PersistentIdentifier.internalLabel -> {hasValue}
+  RegulatorControlledHazardStatement.label -> {code}
+  RegulatorControlledPrecaution.label -> {code}
+
+--- Sample ObjectProperty (nested) ---
+{
+  "type": "ObjectProperty",
+  "name": "totalDosageExpression",
+  "description": {
+    "en": "The total dosage expression",
+    "@none": "The total dosage expression"
+  },
+  "range": "Dosage",
+  "isOptional": true,
+  "isArray": false,
+  "isNestedObject": true,
+  "inferLocation": false,
+  "isLabelSynonym": false,
+  "isFilterable": true,
+  "isSymmetric": false
+}
+
+--- Sample DatatypeProperty with description ---
+{
+  "type": "DatatypeProperty",
+  "name": "building",
+  "description": {
+    "en": "The building in an address",
+    "@none": "The building in an address"
+  },
+  "range": "text",
+  "isOptional": true,
+  "isArray": false,
+  "isLangString": false,
+  "isLabelSynonym": false,
+  "isFilterable": true
+}
+
+--- All unique range values (DatatypeProperty) ---
+['boolean', 'date', 'decimal', 'imageUrl', 'integer', 'keyword', 'text', 'url']
+
+=== OLD SCHEMA ===
+Top keys: ['id', 'guid', 'name', 'account', 'project', 'createdDate', 'lastModifiedDate', 'classes']
+Num classes: 141
+
+--- Sample old class (first) ---
+{
+  "id": "urn:models:42SNVd2Vlmv5E8EuQEEQK6:classes:Address",
+  "guid": "4vo55jkB9J7k07reDhadXR",
+  "model": "urn:models:42SNVd2Vlmv5E8EuQEEQK6",
+  "project": "urn:croplife-eu:projects:dlc-v1",
+  "label": "Address",
+  "labelProperty": "internalLabel",
+  "createdDate": "2022-11-24T14:46:43.654Z",
+  "lastModifiedDate": "2022-11-28T12:01:34.702Z",
+  "parentClasses": [
+    "Address"
+  ],
+  "identifierProperty": "id",
+  "description": ""
+}
+  objectProperties count: 8
+
+--- Old class with parentClass ---
+  Application parentClass=IntermediaryApplication parentClasses=['Application', 'IntermediaryApplication']
+
+--- Old class with description (non-empty) ---
+  Adjuvant: An adjuvant to be included in the tank mix. In future this s...
+
+--- Old property with concept datatype ---
+{
+  "propertyName": "country",
+  "isOptional": true,
+  "isArray": false,
+  "propertyDatatype": {
+    "id": "urn:datagraphs:datatypes:concept",
+    "range": "Country",
+    "type": "PropertyDatatype",
+    "label": "Country",
+    "elasticsearchDatatype": "keyword",
+    "xsdDatatype": "string"
+  },
+  "propertyOrder": 6,
+  "isNestedObject": false,
+  "guid": "6kOQInLM6oTGkKL4j4HNJO",
+  "id": "urn:models:42SNVd2Vlmv5E8EuQEEQK6:classes:Address:country",
+  "propertyDescription": "The country of the address"
+}
