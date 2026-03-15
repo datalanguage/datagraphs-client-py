@@ -19,21 +19,25 @@ class Gateway:
     DEFAULT_WAIT_TIME_MS = 200
     UNKNOWN_PROJECT_NAME = '__unknown__'
 
-    def __init__(self, client: DatagraphsClient, schema: Schema = None, wait_time_ms: int = DEFAULT_WAIT_TIME_MS) -> None:
+    def __init__(self, client: DatagraphsClient, wait_time_ms: int = DEFAULT_WAIT_TIME_MS) -> None:
         """Initialise the Gateway.
 
         Args:
             client: A Datagraphs API client.
-            schema: The project schema used to determine class hierarchy.
             wait_time_ms: Delay in milliseconds between successive API calls.
         """
         self._client = client
-        self._schema = schema
         self._wait_time_ms = wait_time_ms
+        self._schema = None
 
     @property
     def client(self) -> DatagraphsClient:
         return self._client
+
+    def _get_schema(self) -> Schema:
+        if self._schema is None:
+            self._schema = self._client.get_schema()
+        return self._schema
 
     def load_project(self, schema: Schema, datasets: list[Dataset], validation_mode: VALIDATION_MODE = VALIDATION_MODE.PROMPT) -> None:
         """Deploy the project schema and datasets to the API."""
@@ -87,7 +91,7 @@ class Gateway:
 
     def dump_project(self, schema_path: Union[str, Path], datasets_path: Union[str, Path]) -> None:
         """Dump the project schema and datasets to the filesystem."""
-        name_prefix = f'{self._client.project_name}-v{self._schema.version}'
+        name_prefix = f'{self._client.project_name}-v{self._get_schema().version}'
         self._dump_schema(schema_path, name_prefix)
         self._dump_datasets(datasets_path, name_prefix)
 
@@ -134,7 +138,7 @@ class Gateway:
         datasets = self._client.get_datasets()
         for dataset in datasets:
             for dataset_class in dataset.classes:
-                if len(self._schema.find_subclasses(dataset_class)) == 0:
+                if len(self._get_schema().find_subclasses(dataset_class)) == 0:
                     if dataset_class == class_name:
                         try:
                             result = self._load_from_file(dataset_class, dataset.slug, from_dir_path, file_path)
@@ -244,7 +248,7 @@ class Gateway:
             datasets = self._client.get_datasets()
             for dataset in datasets:
                 for dataset_class in dataset.classes:
-                    if len(self._schema.find_subclasses(dataset_class)) == 0:   
+                    if len(self._get_schema().find_subclasses(dataset_class)) == 0:   
                         try:
                             result = self._persist_to_file(dataset_class, to_dir_path, include_date_fields)
                             stats["exported"] += result
