@@ -1,0 +1,79 @@
+=== TOP-LEVEL KEYS ===
+Old: ['classes', 'createdDate', 'description', 'guid', 'id', 'lastModifiedDate', 'name', 'project', 'type']
+New: ['classes', 'createdDate', 'lastModifiedDate', 'name']
+Extra in old: {'project', 'type', 'description', 'id', 'guid'}
+Extra in new: set()
+
+=== CLASS-LEVEL KEYS ===
+Old keys: ['createdDate', 'description', 'guid', 'id', 'identifierProperty', 'label', 'labelProperty', 'lastModifiedDate', 'model', 'objectProperties', 'parentClasses', 'project']
+New keys: ['identifierProperty', 'isAbstract', 'labelProperty', 'name', 'properties', 'type']
+Extra in old: {'project', 'model', 'createdDate', 'description', 'id', 'label', 'lastModifiedDate', 'objectProperties', 'parentClasses', 'guid'}
+Extra in new: {'isAbstract', 'properties', 'name', 'type'}
+
+=== CLASS WITH DESCRIPTION ===
+Old description: 'A class with a description'
+New description: {'en': 'A class with a description', '@none': 'A class with a description'}
+
+=== CLASS WITHOUT DESCRIPTION ===
+Old SimpleClass description: ''
+New SimpleClass description: None
+
+=== SUBCLASS ===
+Old parentClass: ParentClass
+Old parentClasses: ['ChildClass', 'ParentClass']
+New subClassOf: ParentClass
+
+=== PROPERTY-LEVEL KEYS (DatatypeProperty) ===
+Old keys: ['guid', 'id', 'isArray', 'isLangString', 'isNestedObject', 'isOptional', 'propertyDatatype', 'propertyName', 'propertyOrder']
+New keys: ['isArray', 'isFilterable', 'isLabelSynonym', 'isLangString', 'isOptional', 'name', 'range', 'type']
+Extra in old: {'propertyOrder', 'id', 'propertyName', 'isNestedObject', 'guid', 'propertyDatatype'}
+Extra in new: {'type', 'isFilterable', 'range', 'name', 'isLabelSynonym'}
+
+=== PROPERTY-LEVEL KEYS (ObjectProperty) ===
+Old keys: ['guid', 'id', 'isArray', 'isNestedObject', 'isOptional', 'propertyDatatype', 'propertyDescription', 'propertyName', 'propertyOrder']
+New keys: ['description', 'inferLocation', 'isArray', 'isFilterable', 'isLabelSynonym', 'isNestedObject', 'isOptional', 'isSymmetric', 'name', 'range', 'type']
+Extra in old: {'propertyOrder', 'propertyDescription', 'id', 'propertyName', 'guid', 'propertyDatatype'}
+Extra in new: {'type', 'inferLocation', 'description', 'isFilterable', 'range', 'name', 'isLabelSynonym', 'isSymmetric'}
+
+=== PROPERTY WITH DESCRIPTION ===
+Old propertyDescription: 'A text property'
+New description: {'en': 'A text property', '@none': 'A text property'}
+
+=== ENUM PROPERTY ===
+Old validationRules: [
+  {
+    "id": "urn:datagraphs:validation:enumeration",
+    "value": [
+      "OptionA",
+      "OptionB",
+      "OptionC"
+    ]
+  }
+]
+New validationRules: [
+  {
+    "type": "enumeration",
+    "value": [
+      "OptionA",
+      "OptionB",
+      "OptionC"
+    ]
+  }
+]
+
+=== INVERSE PROPERTY ===
+Old inverseOf: ref
+New inverseOf: ref
+New _inverseOf: ref
+
+=== LABEL AUTOGEN ===
+Old propertyValuePattern: {{ CONCATENATE(code, ' - autogen') }}
+New propertyValuePattern: {{ CONCATENATE(code, ' - autogen') }}
+
+=== isFilterable (old sends false as absent, new always present) ===
+Old isFilterable: ABSENT
+New isFilterable: True
+
+=== isLabelSynonym (old sends false as absent, new always present) ===
+Old isLabelSynonym: ABSENT
+New isLabelSynonym: False

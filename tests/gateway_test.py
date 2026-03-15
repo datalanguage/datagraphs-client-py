@@ -88,7 +88,7 @@ class TestDumpData:
     def test_should_skip_baseclasses_when_dumping_all(self, gateway, mock_client, mock_schema):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['BaseClass', 'SubstanceRole'])
         mock_client.get_datasets.return_value = [dataset]
-        mock_schema.find_subclasses.side_effect = lambda name: [{'label': 'Child'}] if name == 'BaseClass' else []
+        mock_schema.find_subclasses.side_effect = lambda name: [{'name': 'Child'}] if name == 'BaseClass' else []
         mock_client.get.return_value = []
         result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
         mock_client.get.assert_called_once()
@@ -167,7 +167,7 @@ class TestLoadData:
     def test_should_skip_baseclasses_when_loading_all(self, gateway, mock_client, mock_schema, substance_role_data):
         dataset = Dataset(name='Test', project='test', classes=['BaseType', 'SubstanceRole'])
         mock_client.get_datasets.return_value = [dataset]
-        mock_schema.find_subclasses.side_effect = lambda name: [{'label': 'Child'}] if name == 'BaseType' else []
+        mock_schema.find_subclasses.side_effect = lambda name: [{'name': 'Child'}] if name == 'BaseType' else []
         with patch.object(Path, 'is_file', return_value=True), \
              patch('builtins.open', mock_open(read_data=json.dumps(substance_role_data))):
             gateway.load_data(from_dir_path=str(DATA_DIR))
@@ -219,7 +219,7 @@ class TestLoadData:
     def test_should_log_baseclass_info(self, gateway, mock_client, mock_schema, caplog):
         dataset = Dataset(name='Test', project='test', classes=['BaseType'])
         mock_client.get_datasets.return_value = [dataset]
-        mock_schema.find_subclasses.return_value = [{'label': 'Child'}]
+        mock_schema.find_subclasses.return_value = [{'name': 'Child'}]
         with caplog.at_level(logging.INFO):
             gateway.load_data()
         assert 'baseclass' in caplog.text

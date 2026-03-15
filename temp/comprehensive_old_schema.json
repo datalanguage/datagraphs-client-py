@@ -1,0 +1,902 @@
+{
+  "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+  "guid": "088a815cdf2b4f298cdf6768c86c76ce",
+  "type": "DomainModel",
+  "name": "Comprehensive Test Model v1.0",
+  "description": "The project information model",
+  "project": "urn:pydg:",
+  "createdDate": "2026-03-15T13:48:38.840405+00:00",
+  "lastModifiedDate": "2026-03-15T13:48:38.840518+00:00",
+  "classes": [
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:SimpleClass",
+      "guid": "8e5bca174b4840bf98bea2d93affeb92",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "SimpleClass",
+      "labelProperty": "label",
+      "createdDate": "2026-03-15T13:48:38.840528+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840528+00:00",
+      "parentClasses": [
+        "SimpleClass"
+      ],
+      "identifierProperty": "id",
+      "description": "",
+      "objectProperties": [
+        {
+          "propertyName": "label",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "539d34c987164560b2b6fd786d676068",
+          "propertyOrder": 0,
+          "isLangString": true,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:SimpleClass:label"
+        }
+      ]
+    },
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:DescribedClass",
+      "guid": "a39aca978b6a40cfb0916a81978eff41",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "DescribedClass",
+      "labelProperty": "name",
+      "createdDate": "2026-03-15T13:48:38.840536+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840536+00:00",
+      "parentClasses": [
+        "DescribedClass"
+      ],
+      "identifierProperty": "id",
+      "description": "A class with a description",
+      "objectProperties": [
+        {
+          "propertyName": "name",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "9c6c826e34a143f49fafbc1f7b884791",
+          "propertyOrder": 0,
+          "isLangString": true,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:DescribedClass:name"
+        }
+      ]
+    },
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:NonLangStringClass",
+      "guid": "de40b31b31b44915a9a1d8c52d6347eb",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "NonLangStringClass",
+      "labelProperty": "title",
+      "createdDate": "2026-03-15T13:48:38.840542+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840542+00:00",
+      "parentClasses": [
+        "NonLangStringClass"
+      ],
+      "identifierProperty": "id",
+      "description": "",
+      "objectProperties": [
+        {
+          "propertyName": "title",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "802b6dfdda9f4b20a3613b67e431f00b",
+          "propertyOrder": 0,
+          "isLangString": false,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:NonLangStringClass:title"
+        }
+      ]
+    },
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes",
+      "guid": "4055f06ada8a486baf4a33c33bb68df3",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "AllDatatypes",
+      "labelProperty": "name",
+      "createdDate": "2026-03-15T13:48:38.840548+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840548+00:00",
+      "parentClasses": [
+        "AllDatatypes"
+      ],
+      "identifierProperty": "id",
+      "description": "Class with all datatype properties",
+      "objectProperties": [
+        {
+          "propertyName": "name",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "f623e7cfcfc5490e98c1116370d21519",
+          "propertyOrder": 0,
+          "isLangString": true,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:name"
+        },
+        {
+          "propertyName": "textProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:textProp",
+          "guid": "7087e3da655f4bfcb36a2ce8a53099f0",
+          "propertyOrder": 1,
+          "propertyDescription": "A text property",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": true,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "textNonLang",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:textNonLang",
+          "guid": "9a3c092c39c247419b13dbf00baf96db",
+          "propertyOrder": 2,
+          "propertyDescription": "A non-lang text property",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "dateProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:dateProp",
+          "guid": "7c7dff4a592245a1a55365863a29808f",
+          "propertyOrder": 3,
+          "propertyDescription": "A date property",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:date",
+            "type": "PropertyDatatype",
+            "label": "date",
+            "elasticsearchDatatype": "date",
+            "xsdDatatype": "date"
+          }
+        },
+        {
+          "propertyName": "datetimeProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:datetimeProp",
+          "guid": "be5371a66dd6465a8f8d4c71979c31ab",
+          "propertyOrder": 4,
+          "propertyDescription": "A datetime property",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:datetime",
+            "type": "PropertyDatatype",
+            "label": "datetime",
+            "elasticsearchDatatype": "dateTime",
+            "xsdDatatype": "dateTime"
+          }
+        },
+        {
+          "propertyName": "booleanProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:booleanProp",
+          "guid": "ee12f57e8f2e41f99c18cc979c77cfa4",
+          "propertyOrder": 5,
+          "propertyDescription": "A boolean property",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:boolean",
+            "type": "PropertyDatatype",
+            "label": "boolean",
+            "elasticsearchDatatype": "boolean",
+            "xsdDatatype": "boolean"
+          }
+        },
+        {
+          "propertyName": "decimalProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:decimalProp",
+          "guid": "e5a84e57cd554103acfba4a52c9bb865",
+          "propertyOrder": 6,
+          "propertyDescription": "A decimal property",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:decimal",
+            "type": "PropertyDatatype",
+            "label": "decimal",
+            "elasticsearchDatatype": "double",
+            "xsdDatatype": "decimal"
+          }
+        },
+        {
+          "propertyName": "integerProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:integerProp",
+          "guid": "aeca8e3e9c194ec58068f38ab8dbd9d1",
+          "propertyOrder": 7,
+          "propertyDescription": "An integer property",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:integer",
+            "type": "PropertyDatatype",
+            "label": "integer",
+            "elasticsearchDatatype": "long",
+            "xsdDatatype": "integer"
+          }
+        },
+        {
+          "propertyName": "keywordProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:keywordProp",
+          "guid": "a83dc271e0f3412283f464dd18117cb5",
+          "propertyOrder": 8,
+          "propertyDescription": "A keyword property",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:keyword",
+            "type": "PropertyDatatype",
+            "label": "keyword",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "urlProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:urlProp",
+          "guid": "be2281e2f9f9438daa97faca7fef8f06",
+          "propertyOrder": 9,
+          "propertyDescription": "A URL property",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:url",
+            "type": "PropertyDatatype",
+            "label": "url",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "imageUrlProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:imageUrlProp",
+          "guid": "c6e8ab5a07b24d2b8ff0939d686134d6",
+          "propertyOrder": 10,
+          "propertyDescription": "An image URL property",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:imageUrl",
+            "type": "PropertyDatatype",
+            "label": "imageUrl",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "enumProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AllDatatypes:enumProp",
+          "guid": "b4d5f6e0b3f7415da567f337438c554a",
+          "propertyOrder": 11,
+          "propertyDescription": "An enum property",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:enum",
+            "type": "PropertyDatatype",
+            "label": "enum",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string"
+          },
+          "validationRules": [
+            {
+              "id": "urn:datagraphs:validation:enumeration",
+              "value": [
+                "OptionA",
+                "OptionB",
+                "OptionC"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:PropertyFlags",
+      "guid": "2e81f145e4da4a5c9216afc88986ad16",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "PropertyFlags",
+      "labelProperty": "label",
+      "createdDate": "2026-03-15T13:48:38.840622+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840622+00:00",
+      "parentClasses": [
+        "PropertyFlags"
+      ],
+      "identifierProperty": "id",
+      "description": "Class testing property flags",
+      "objectProperties": [
+        {
+          "propertyName": "label",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "a6ab61de08ef47b4a3f1fe8061458304",
+          "propertyOrder": 0,
+          "isLangString": true,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:PropertyFlags:label"
+        },
+        {
+          "propertyName": "requiredProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:PropertyFlags:requiredProp",
+          "guid": "5b45dc4931804925b926e942f8f6587f",
+          "propertyOrder": 1,
+          "propertyDescription": "A required property",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "optionalProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:PropertyFlags:optionalProp",
+          "guid": "7e6c09732de243d4aaedbc7b1736f41d",
+          "propertyOrder": 2,
+          "propertyDescription": "An optional property",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": true,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "arrayProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:PropertyFlags:arrayProp",
+          "guid": "865c56c503904b089eb23c82fd0325a7",
+          "propertyOrder": 3,
+          "propertyDescription": "An array property",
+          "isOptional": true,
+          "isArray": true,
+          "isLangString": true,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "filterableProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:PropertyFlags:filterableProp",
+          "guid": "dbc769b9e22e46ea9a1cede906e8d53b",
+          "propertyOrder": 4,
+          "propertyDescription": "A filterable property",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:keyword",
+            "type": "PropertyDatatype",
+            "label": "keyword",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string"
+          },
+          "isFilterable": true
+        },
+        {
+          "propertyName": "synonymProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:PropertyFlags:synonymProp",
+          "guid": "b737675d1a064a06b44eb4359f82b96e",
+          "propertyOrder": 5,
+          "propertyDescription": "A synonym property",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": true,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isLabelSynonym": true
+        },
+        {
+          "propertyName": "requiredArrayProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:PropertyFlags:requiredArrayProp",
+          "guid": "8e7b2baf0e2344e4991f34383aac73ae",
+          "propertyOrder": 6,
+          "propertyDescription": "A required array property",
+          "isOptional": false,
+          "isArray": true,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:integer",
+            "type": "PropertyDatatype",
+            "label": "integer",
+            "elasticsearchDatatype": "long",
+            "xsdDatatype": "integer"
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ReferencedClass",
+      "guid": "a5ceed69b5414ace965bbed86107a288",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "ReferencedClass",
+      "labelProperty": "name",
+      "createdDate": "2026-03-15T13:48:38.840658+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840658+00:00",
+      "parentClasses": [
+        "ReferencedClass"
+      ],
+      "identifierProperty": "id",
+      "description": "A class referenced by others",
+      "objectProperties": [
+        {
+          "propertyName": "name",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "778359d2337b4e88aa3440f104203150",
+          "propertyOrder": 0,
+          "isLangString": true,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ReferencedClass:name"
+        },
+        {
+          "propertyName": "code",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ReferencedClass:code",
+          "guid": "065c4ac7d88e47aab81eb2da01da045a",
+          "propertyOrder": 1,
+          "propertyDescription": "A unique code",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:keyword",
+            "type": "PropertyDatatype",
+            "label": "keyword",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "inverseRef",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ReferencedClass:inverseRef",
+          "guid": "690082eab6714cf5a10d87d3c50e3384",
+          "propertyOrder": 2,
+          "propertyDescription": "Inverse reference back",
+          "isOptional": true,
+          "isArray": false,
+          "isNestedObject": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:concept",
+            "type": "PropertyDatatype",
+            "label": "InversePropertyClass",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string",
+            "range": "InversePropertyClass"
+          },
+          "inverseOf": "ref"
+        }
+      ]
+    },
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ObjectPropertyClass",
+      "guid": "b8c3ed3a65474589b17c281e8a99131b",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "ObjectPropertyClass",
+      "labelProperty": "name",
+      "createdDate": "2026-03-15T13:48:38.840667+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840667+00:00",
+      "parentClasses": [
+        "ObjectPropertyClass"
+      ],
+      "identifierProperty": "id",
+      "description": "Class with object properties",
+      "objectProperties": [
+        {
+          "propertyName": "name",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "bbcce5e52b754718adc5fe475482d404",
+          "propertyOrder": 0,
+          "isLangString": true,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ObjectPropertyClass:name"
+        },
+        {
+          "propertyName": "simpleRef",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ObjectPropertyClass:simpleRef",
+          "guid": "74fb1c43735545a6b4a0480dd9ca8832",
+          "propertyOrder": 1,
+          "propertyDescription": "A simple object reference",
+          "isOptional": true,
+          "isArray": false,
+          "isNestedObject": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:concept",
+            "type": "PropertyDatatype",
+            "label": "ReferencedClass",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string",
+            "range": "ReferencedClass"
+          }
+        },
+        {
+          "propertyName": "nestedRef",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ObjectPropertyClass:nestedRef",
+          "guid": "c4aa4cff4d064924b5d6e8bfe9d2b64a",
+          "propertyOrder": 2,
+          "propertyDescription": "A nested object reference",
+          "isOptional": true,
+          "isArray": false,
+          "isNestedObject": true,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:concept",
+            "type": "PropertyDatatype",
+            "label": "ReferencedClass",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string",
+            "range": "ReferencedClass"
+          }
+        },
+        {
+          "propertyName": "arrayRef",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ObjectPropertyClass:arrayRef",
+          "guid": "bc71de08de7647e9aa6b9db2788255c0",
+          "propertyOrder": 3,
+          "propertyDescription": "An array of object references",
+          "isOptional": true,
+          "isArray": true,
+          "isNestedObject": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:concept",
+            "type": "PropertyDatatype",
+            "label": "ReferencedClass",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string",
+            "range": "ReferencedClass"
+          }
+        },
+        {
+          "propertyName": "nestedArrayRef",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ObjectPropertyClass:nestedArrayRef",
+          "guid": "b33623202eab4563a6a771eb64cc6ee3",
+          "propertyOrder": 4,
+          "propertyDescription": "An array of nested object references",
+          "isOptional": true,
+          "isArray": true,
+          "isNestedObject": true,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:concept",
+            "type": "PropertyDatatype",
+            "label": "ReferencedClass",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string",
+            "range": "ReferencedClass"
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:InversePropertyClass",
+      "guid": "f2ac9f1efe884d79952b976ed56b62dd",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "InversePropertyClass",
+      "labelProperty": "name",
+      "createdDate": "2026-03-15T13:48:38.840689+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840689+00:00",
+      "parentClasses": [
+        "InversePropertyClass"
+      ],
+      "identifierProperty": "id",
+      "description": "Class with inverse properties",
+      "objectProperties": [
+        {
+          "propertyName": "name",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "dcc3e9a52307430fabc4a8e842727af3",
+          "propertyOrder": 0,
+          "isLangString": true,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:InversePropertyClass:name"
+        },
+        {
+          "propertyName": "ref",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:InversePropertyClass:ref",
+          "guid": "e31694900dfa4904af679ae6f0a6685f",
+          "propertyOrder": 1,
+          "propertyDescription": "Reference to ReferencedClass",
+          "isOptional": true,
+          "isArray": false,
+          "isNestedObject": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:concept",
+            "type": "PropertyDatatype",
+            "label": "ReferencedClass",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string",
+            "range": "ReferencedClass"
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ParentClass",
+      "guid": "a2ce9c76deaf4392af55ed15870a5e00",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "ParentClass",
+      "labelProperty": "name",
+      "createdDate": "2026-03-15T13:48:38.840706+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840706+00:00",
+      "parentClasses": [
+        "ParentClass"
+      ],
+      "identifierProperty": "id",
+      "description": "A parent class",
+      "objectProperties": [
+        {
+          "propertyName": "name",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "be10d4c67ef64162a98429da8c9ebee2",
+          "propertyOrder": 0,
+          "isLangString": true,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ParentClass:name"
+        },
+        {
+          "propertyName": "sharedProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ParentClass:sharedProp",
+          "guid": "b0b66c474a904f029ca3de6f9c324b9c",
+          "propertyOrder": 1,
+          "propertyDescription": "Shared by subclasses",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": true,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "parentOnlyProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ParentClass:parentOnlyProp",
+          "guid": "ba9d6e3e47d841adb24c25c2b4c3f79d",
+          "propertyOrder": 2,
+          "propertyDescription": "Only on parent",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:integer",
+            "type": "PropertyDatatype",
+            "label": "integer",
+            "elasticsearchDatatype": "long",
+            "xsdDatatype": "integer"
+          }
+        }
+      ]
+    },
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ChildClass",
+      "guid": "03311ba1dc014f41b439bd7b81a494ab",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "ChildClass",
+      "labelProperty": "name",
+      "createdDate": "2026-03-15T13:48:38.840725+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840725+00:00",
+      "parentClasses": [
+        "ChildClass",
+        "ParentClass"
+      ],
+      "identifierProperty": "id",
+      "description": "A child class inheriting from ParentClass",
+      "objectProperties": [
+        {
+          "propertyName": "name",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "da6a8d73fcfd403688474d76d20b831d",
+          "propertyOrder": 0,
+          "isLangString": true,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ChildClass:name"
+        },
+        {
+          "propertyName": "sharedProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ChildClass:sharedProp",
+          "guid": "ccf5cc9d4b91492bb2275c7c8ab4904d",
+          "propertyOrder": 1,
+          "propertyDescription": "Shared by subclasses",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": true,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          }
+        },
+        {
+          "propertyName": "parentOnlyProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ChildClass:parentOnlyProp",
+          "guid": "2ecd4fd6ad1640008f6ac52fda97e76a",
+          "propertyOrder": 2,
+          "propertyDescription": "Only on parent",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:integer",
+            "type": "PropertyDatatype",
+            "label": "integer",
+            "elasticsearchDatatype": "long",
+            "xsdDatatype": "integer"
+          }
+        },
+        {
+          "propertyName": "childOnlyProp",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:ChildClass:childOnlyProp",
+          "guid": "124b39a9d3764489a9cbcb4e6843420c",
+          "propertyOrder": 3,
+          "propertyDescription": "Only on child",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:keyword",
+            "type": "PropertyDatatype",
+            "label": "keyword",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string"
+          }
+        }
+      ],
+      "parentClass": "ParentClass"
+    },
+    {
+      "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AutogenClass",
+      "guid": "39a50cc4880e4dca90871e3cb6c02ff5",
+      "model": "urn:models:088a815cdf2b4f298cdf6768c86c76ce",
+      "project": "urn:pydg:",
+      "label": "AutogenClass",
+      "labelProperty": "name",
+      "createdDate": "2026-03-15T13:48:38.840749+00:00",
+      "lastModifiedDate": "2026-03-15T13:48:38.840749+00:00",
+      "parentClasses": [
+        "AutogenClass"
+      ],
+      "identifierProperty": "id",
+      "description": "Class with autogen label",
+      "objectProperties": [
+        {
+          "propertyName": "name",
+          "isOptional": false,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:text",
+            "type": "PropertyDatatype",
+            "label": "text",
+            "elasticsearchDatatype": "text",
+            "xsdDatatype": "string"
+          },
+          "isNestedObject": false,
+          "guid": "9997b30b566e4753864786f7697ee28c",
+          "propertyOrder": 0,
+          "isLangString": true,
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AutogenClass:name",
+          "propertyValuePattern": "{{ CONCATENATE(code, ' - autogen') }}"
+        },
+        {
+          "propertyName": "code",
+          "id": "urn:models:088a815cdf2b4f298cdf6768c86c76ce:classes:AutogenClass:code",
+          "guid": "d2d6873d538b450988cfc64b37bc0ffc",
+          "propertyOrder": 1,
+          "propertyDescription": "A code value",
+          "isOptional": true,
+          "isArray": false,
+          "propertyDatatype": {
+            "id": "urn:datagraphs:datatypes:keyword",
+            "type": "PropertyDatatype",
+            "label": "keyword",
+            "elasticsearchDatatype": "keyword",
+            "xsdDatatype": "string"
+          }
+        }
+      ]
+    }
+  ]
+}

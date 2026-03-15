@@ -1,0 +1,699 @@
+{
+  "name": "Domain Model v1.0",
+  "createdDate": "2026-02-16T13:56:13.414Z",
+  "lastModifiedDate": "2026-03-15T13:48:40.995121+00:00",
+  "classes": [
+    {
+      "type": "Class",
+      "name": "AllDatatypes",
+      "description": {
+        "en": "Class with all datatype properties",
+        "@none": "Class with all datatype properties"
+      },
+      "labelProperty": "name",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "name",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "textProp",
+          "description": {
+            "en": "A text property",
+            "@none": "A text property"
+          },
+          "range": "text",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "textNonLang",
+          "description": {
+            "en": "A non-lang text property",
+            "@none": "A non-lang text property"
+          },
+          "range": "text",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "dateProp",
+          "description": {
+            "en": "A date property",
+            "@none": "A date property"
+          },
+          "range": "date",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "datetimeProp",
+          "description": {
+            "en": "A datetime property",
+            "@none": "A datetime property"
+          },
+          "range": "datetime",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "booleanProp",
+          "description": {
+            "en": "A boolean property",
+            "@none": "A boolean property"
+          },
+          "range": "boolean",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "decimalProp",
+          "description": {
+            "en": "A decimal property",
+            "@none": "A decimal property"
+          },
+          "range": "decimal",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "integerProp",
+          "description": {
+            "en": "An integer property",
+            "@none": "An integer property"
+          },
+          "range": "integer",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "keywordProp",
+          "description": {
+            "en": "A keyword property",
+            "@none": "A keyword property"
+          },
+          "range": "keyword",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "urlProp",
+          "description": {
+            "en": "A URL property",
+            "@none": "A URL property"
+          },
+          "range": "url",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "imageUrlProp",
+          "description": {
+            "en": "An image URL property",
+            "@none": "An image URL property"
+          },
+          "range": "imageUrl",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "enumProp",
+          "description": {
+            "en": "An enum property",
+            "@none": "An enum property"
+          },
+          "range": "enum",
+          "isOptional": true,
+          "isArray": false,
+          "validationRules": [
+            {
+              "type": "enumeration",
+              "value": [
+                "OptionA",
+                "OptionB",
+                "OptionC"
+              ]
+            }
+          ],
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        }
+      ],
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "AutogenClass",
+      "description": {
+        "en": "Class with autogen label",
+        "@none": "Class with autogen label"
+      },
+      "labelProperty": "name",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "name",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "propertyValuePattern": "{{ CONCATENATE(code, ' - autogen') }}",
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "code",
+          "description": {
+            "en": "A code value",
+            "@none": "A code value"
+          },
+          "range": "keyword",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        }
+      ],
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "ChildClass",
+      "description": {
+        "en": "A child class inheriting from ParentClass",
+        "@none": "A child class inheriting from ParentClass"
+      },
+      "labelProperty": "name",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "name",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "sharedProp",
+          "description": {
+            "en": "Shared by subclasses",
+            "@none": "Shared by subclasses"
+          },
+          "range": "text",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "parentOnlyProp",
+          "description": {
+            "en": "Only on parent",
+            "@none": "Only on parent"
+          },
+          "range": "integer",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "childOnlyProp",
+          "description": {
+            "en": "Only on child",
+            "@none": "Only on child"
+          },
+          "range": "keyword",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        }
+      ],
+      "subClassOf": "ParentClass",
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "DescribedClass",
+      "description": {
+        "en": "A class with a description",
+        "@none": "A class with a description"
+      },
+      "labelProperty": "name",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "name",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        }
+      ],
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "InversePropertyClass",
+      "description": {
+        "en": "Class with inverse properties",
+        "@none": "Class with inverse properties"
+      },
+      "labelProperty": "name",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "name",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "ObjectProperty",
+          "name": "ref",
+          "description": {
+            "en": "Reference to ReferencedClass",
+            "@none": "Reference to ReferencedClass"
+          },
+          "range": "ReferencedClass",
+          "isOptional": true,
+          "isArray": false,
+          "isNestedObject": false,
+          "inferLocation": false,
+          "isLabelSynonym": false,
+          "isFilterable": true,
+          "isSymmetric": false,
+          "_inverseOf": "inverseRef"
+        }
+      ],
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "NonLangStringClass",
+      "labelProperty": "title",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "title",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        }
+      ],
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "ObjectPropertyClass",
+      "description": {
+        "en": "Class with object properties",
+        "@none": "Class with object properties"
+      },
+      "labelProperty": "name",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "name",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "ObjectProperty",
+          "name": "simpleRef",
+          "description": {
+            "en": "A simple object reference",
+            "@none": "A simple object reference"
+          },
+          "range": "ReferencedClass",
+          "isOptional": true,
+          "isArray": false,
+          "isNestedObject": false,
+          "inferLocation": false,
+          "isLabelSynonym": false,
+          "isFilterable": true,
+          "isSymmetric": false
+        },
+        {
+          "type": "ObjectProperty",
+          "name": "nestedRef",
+          "description": {
+            "en": "A nested object reference",
+            "@none": "A nested object reference"
+          },
+          "range": "ReferencedClass",
+          "isOptional": true,
+          "isArray": false,
+          "isNestedObject": true,
+          "inferLocation": false,
+          "isLabelSynonym": false,
+          "isFilterable": true,
+          "isSymmetric": false
+        },
+        {
+          "type": "ObjectProperty",
+          "name": "arrayRef",
+          "description": {
+            "en": "An array of object references",
+            "@none": "An array of object references"
+          },
+          "range": "ReferencedClass",
+          "isOptional": true,
+          "isArray": true,
+          "isNestedObject": false,
+          "inferLocation": false,
+          "isLabelSynonym": false,
+          "isFilterable": true,
+          "isSymmetric": false
+        },
+        {
+          "type": "ObjectProperty",
+          "name": "nestedArrayRef",
+          "description": {
+            "en": "An array of nested object references",
+            "@none": "An array of nested object references"
+          },
+          "range": "ReferencedClass",
+          "isOptional": true,
+          "isArray": true,
+          "isNestedObject": true,
+          "inferLocation": false,
+          "isLabelSynonym": false,
+          "isFilterable": true,
+          "isSymmetric": false
+        }
+      ],
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "ParentClass",
+      "description": {
+        "en": "A parent class",
+        "@none": "A parent class"
+      },
+      "labelProperty": "name",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "name",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "sharedProp",
+          "description": {
+            "en": "Shared by subclasses",
+            "@none": "Shared by subclasses"
+          },
+          "range": "text",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "parentOnlyProp",
+          "description": {
+            "en": "Only on parent",
+            "@none": "Only on parent"
+          },
+          "range": "integer",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        }
+      ],
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "PropertyFlags",
+      "description": {
+        "en": "Class testing property flags",
+        "@none": "Class testing property flags"
+      },
+      "labelProperty": "label",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "label",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "requiredProp",
+          "description": {
+            "en": "A required property",
+            "@none": "A required property"
+          },
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "optionalProp",
+          "description": {
+            "en": "An optional property",
+            "@none": "An optional property"
+          },
+          "range": "text",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "arrayProp",
+          "description": {
+            "en": "An array property",
+            "@none": "An array property"
+          },
+          "range": "text",
+          "isOptional": true,
+          "isArray": true,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "filterableProp",
+          "description": {
+            "en": "A filterable property",
+            "@none": "A filterable property"
+          },
+          "range": "keyword",
+          "isOptional": true,
+          "isArray": false,
+          "isFilterable": true,
+          "isLangString": false,
+          "isLabelSynonym": false
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "synonymProp",
+          "description": {
+            "en": "A synonym property",
+            "@none": "A synonym property"
+          },
+          "range": "text",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": true,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "requiredArrayProp",
+          "description": {
+            "en": "A required array property",
+            "@none": "A required array property"
+          },
+          "range": "integer",
+          "isOptional": false,
+          "isArray": true,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        }
+      ],
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "ReferencedClass",
+      "description": {
+        "en": "A class referenced by others",
+        "@none": "A class referenced by others"
+      },
+      "labelProperty": "name",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "name",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "DatatypeProperty",
+          "name": "code",
+          "description": {
+            "en": "A unique code",
+            "@none": "A unique code"
+          },
+          "range": "keyword",
+          "isOptional": true,
+          "isArray": false,
+          "isLangString": false,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        },
+        {
+          "type": "ObjectProperty",
+          "name": "inverseRef",
+          "description": {
+            "en": "Inverse reference back",
+            "@none": "Inverse reference back"
+          },
+          "range": "InversePropertyClass",
+          "isOptional": true,
+          "isArray": false,
+          "isNestedObject": false,
+          "inverseOf": "ref",
+          "inferLocation": false,
+          "isLabelSynonym": false,
+          "isFilterable": true,
+          "isSymmetric": false,
+          "_inverseOf": "ref"
+        }
+      ],
+      "isAbstract": false
+    },
+    {
+      "type": "Class",
+      "name": "SimpleClass",
+      "labelProperty": "label",
+      "identifierProperty": "id",
+      "properties": [
+        {
+          "type": "DatatypeProperty",
+          "name": "label",
+          "range": "text",
+          "isOptional": false,
+          "isArray": false,
+          "isLangString": true,
+          "isLabelSynonym": false,
+          "isFilterable": true
+        }
+      ],
+      "isAbstract": false
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+57ddccdd2cd14be560034c59a6a2cd384eefe71f
+57ddccd Migration to new schema structure complete and tests passing
+d82777a Updated load project function to use supplied schema rather than default schema
+4c007d3 Added integration tests for gateway project load and dump
+55b158c Added tests for loading projects
+7e4753d Standardised naming of datatype and type_name to be class_name, and changed ALL_DATATYPES to ALL_CLASSES
+c787bbf Added project deployment to gateway
+0ddf4ec Updated logging and error handling
+4eb18b8 Added support for token-based pagination in large data dumps
+8da75ca Added more logging
+3da0d25 Bumped version
+---STATUS---
+?? temp/git_state.txt
+---DIFF-STAT---
+ src/datagraphs/gateway.py |    14 +-
+ src/datagraphs/schema.py  |   245 +-
+ src/datagraphs/utils.py   |   226 +-
+ temp/new_schema.json      | 10077 +++++++++++++++++++++++++++++++
+ temp/old_schema.json      | 14209 ++++++++++++++++++++++++++++++++++++++++++++
+ tests/client_test.py      |     8 +-
+ tests/gateway_test.py     |    14 +-
+ tests/schema_test.py      |   171 +-
+ tests/utils_test.py       |   382 ++
+ tests_integration/lib.py  |     4 +-
+ 10 files changed, 25116 insertions(+), 234 deletions(-)
