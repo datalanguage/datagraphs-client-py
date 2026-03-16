@@ -132,6 +132,10 @@ class TestDataRetrieval:
         status = self.client.status()
         assert status == 'OK'
 
+    def test_should_set_custom_wait_time(self):
+        self.client.set_wait_time(wait_time_ms=500)
+        assert self.client.wait_time_ms == 500
+
     def test_should_get_data_for_specified_class_name_from_correct_endpoint(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
         self.client.get('Test')

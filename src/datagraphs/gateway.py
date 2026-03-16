@@ -16,10 +16,9 @@ logger = logging.getLogger(__name__)
 class Gateway:
     """Gateway for loading and dumping data between the filesystem and a Datagraphs project."""
 
-    DEFAULT_WAIT_TIME_MS = 200
     UNKNOWN_PROJECT_NAME = '__unknown__'
 
-    def __init__(self, client: DatagraphsClient, wait_time_ms: int = DEFAULT_WAIT_TIME_MS) -> None:
+    def __init__(self, client: DatagraphsClient, wait_time_ms: int = DatagraphsClient.DEFAULT_WAIT_TIME_MS) -> None:
         """Initialise the Gateway.
 
         Args:
@@ -28,6 +27,7 @@ class Gateway:
         """
         self._client = client
         self._wait_time_ms = wait_time_ms
+        self._client.set_wait_time(wait_time_ms)
         self._schema = None
 
     @property

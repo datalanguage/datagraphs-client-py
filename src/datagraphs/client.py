@@ -1,5 +1,6 @@
 """DataGraphs API client for interacting with the DataGraphs service."""
 
+import time
 import logging
 import requests
 import json
@@ -33,6 +34,7 @@ class Client:
     AUTH_URL_SUFFIX = "oauth/token"
 
     DEFAULT_BATCH_SIZE = 100
+    DEFAULT_WAIT_TIME_MS = 200
     DEFAULT_FACET_SIZE = 10
     MAX_AUTH_RETRIES = 2
     
@@ -73,10 +75,28 @@ class Client:
         self._auth_token = ''
         self._service_url = service_url if service_url.endswith('/') else f'{service_url}/'
         self._http_client = requests
+        self._wait_time_ms = self.DEFAULT_WAIT_TIME_MS
 
     @property
     def _base_url(self) -> str:
         return f'{self._service_url}{self.project_name}/'
+
+    def set_wait_time(self, wait_time_ms: int) -> None:
+        """Set the wait time between paginated requests.
+
+        Args:
+            wait_time_ms: Wait time in milliseconds.
+        """
+        self._wait_time_ms = wait_time_ms
+
+    @property
+    def wait_time_ms(self) -> int:
+        """Get the current wait time between paginated requests.
+
+        Returns:
+            The wait time in milliseconds.
+        """
+        return self._wait_time_ms
 
     def _get_auth_token(self, force_refresh=False) -> str:
         if force_refresh or not self._auth_token:
@@ -228,6 +248,7 @@ class Client:
                 resp = self._request(HTTP.GET, url, headers=self._get_headers(lang))
                 if 'results' in resp:
                     data.extend(resp['results'])
+                time.sleep(self._wait_time_ms / 1000)
             return data
         return []
 

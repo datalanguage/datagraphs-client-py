@@ -48,7 +48,7 @@ class TestInit:
         gateway = DatagraphsGateway(mock_client)
         assert gateway._client is mock_client
         assert gateway._schema is None
-        assert gateway._wait_time_ms == DatagraphsGateway.DEFAULT_WAIT_TIME_MS
+        assert gateway._wait_time_ms == DatagraphsClient.DEFAULT_WAIT_TIME_MS
 
     def test_should_initialize_with_custom_wait_time(self, mock_client):
         gateway = DatagraphsGateway(mock_client, wait_time_ms=500)
