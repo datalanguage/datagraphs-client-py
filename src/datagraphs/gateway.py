@@ -134,33 +134,36 @@ class Gateway:
         """
         from_dir_path = Path(from_dir_path) if from_dir_path else Path()
         stats = {"loaded": 0, "skipped": 0}
-
         datasets = self._client.get_datasets()
-        for dataset in datasets:
-            for dataset_class in dataset.classes:
-                if len(self._get_schema().find_subclasses(dataset_class)) == 0:
-                    if dataset_class == class_name:
-                        try:
-                            result = self._load_from_file(dataset_class, dataset.slug, from_dir_path, file_path)
-                            stats["loaded"] += result["loaded"]
-                            stats["skipped"] += result["skipped"]
-                        except Exception as e:
-                            logger.error('Error loading data for %s: %s', dataset_class, str(e))
-                            stats["skipped"] += 1
-                        return stats
-                    elif class_name == Schema.ALL_CLASSES:
-                        try:
-                            result = self._load_from_file(dataset_class, dataset.slug, from_dir_path)
-                            stats["loaded"] += result["loaded"]
-                            stats["skipped"] += result["skipped"]
-                            time.sleep(self._wait_time_ms / 1000)
-                        except Exception as e:
-                            logger.error('Error loading data for %s: %s', dataset_class, str(e))
-                            stats["skipped"] += 1
-                else:
-                    logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
-        if class_name != Schema.ALL_CLASSES:
-            logger.error('The class %s was not found in any dataset - cannot load data for this class.', class_name)
+        if class_name == Schema.ALL_CLASSES:
+            for dataset in datasets:
+                stats = self._load_data_for_dataset(stats, dataset, from_dir_path)
+        else:
+            dataset = next((d for d in datasets if class_name in d.classes), None)
+            if dataset is not None:
+                stats = self._load_data_for_class(stats, class_name, dataset.slug, from_dir_path, file_path)
+            else:
+                logger.error('The class %s was not found in any dataset - cannot load data.', class_name)
+                stats["skipped"] += 1
+        return stats
+
+    def _load_data_for_dataset(self, stats: dict, dataset: Dataset, from_dir_path: Union[str, Path]) -> dict:
+        """Load data for all non-base classes in a dataset."""
+        for dataset_class in dataset.classes:
+            if len(self._get_schema().find_subclasses(dataset_class)) == 0:
+                stats = self._load_data_for_class(stats, dataset_class, dataset.slug, from_dir_path)
+            else:
+                logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
+        return stats
+
+    def _load_data_for_class(self, stats: dict, class_name: str, dataset_slug: str, from_dir_path: Union[str, Path] = "", file_path: Union[str, Path] = "") -> dict:
+        """Load data for a specific class from a JSON file."""
+        try:
+            result = self._load_from_file(class_name, dataset_slug, from_dir_path, file_path)
+            stats["loaded"] += result["loaded"]
+            stats["skipped"] += result["skipped"]
+        except Exception as e:
+            logger.error('Error loading data for %s: %s', class_name, str(e))
             stats["skipped"] += 1
         return stats
 
