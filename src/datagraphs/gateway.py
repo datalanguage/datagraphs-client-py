@@ -44,7 +44,7 @@ class Gateway:
         if self._validate_datasets(datasets, self._client.get_datasets(), validation_mode):
             self._client.tear_down()
             self._client.apply_schema(schema)
-            self._client.apply_datasets(datasets)        
+            self._client.apply_datasets(datasets)
 
     def _validate_datasets(self, deployment_datasets: list[Dataset], existing_datasets: list[Dataset], validation_mode: VALIDATION_MODE) -> None:
         """Validate that the local and API datasets match in terms of class names."""
@@ -69,14 +69,14 @@ class Gateway:
     def _ensure_no_duplicate_classes(self, datasets: list[Dataset]) -> None:
         """Validate that no duplicate class names are found across the provided datasets."""
         seen_classes: dict[str, str] = {}
-        for dataset in datasets:
-            for class_name in dataset.classes:
-                if class_name in seen_classes:
-                    raise ValueError(
-                        f'Duplicate class {class_name} found in dataset {dataset.slug} '
-                        f'- already defined in dataset {seen_classes[class_name]}'
+        dataset_classes = [(cls, d.slug) for d in datasets for cls in d.classes]
+        for class_name, dataset_slug in dataset_classes:
+            if class_name in seen_classes:
+                raise ValueError(
+                    f'Duplicate class {class_name} found in dataset {dataset_slug} '
+                    f'- already defined in dataset {seen_classes[class_name]}'
                     )
-                seen_classes[class_name] = dataset.slug
+            seen_classes[class_name] = dataset_slug
         return seen_classes.keys()
 
     def _verify_datasets_against_classlist(self, datasets: list[Dataset], classes: list[str]) -> None:
@@ -249,15 +249,15 @@ class Gateway:
 
         if class_name == Schema.ALL_CLASSES:
             datasets = self._client.get_datasets()
-            for dataset in datasets:
-                for dataset_class in dataset.classes:
-                    if len(self._get_schema().find_subclasses(dataset_class)) == 0:   
-                        try:
-                            result = self._persist_to_file(dataset_class, to_dir_path, include_date_fields)
-                            stats["exported"] += result
-                            time.sleep(self._wait_time_ms / 1000)
-                        except Exception as e:
-                            logger.error('Error exporting data for %s: %s', dataset_class, str(e))                     
+            dataset_classes = [cls for d in datasets for cls in d.classes]
+            for dataset_class in dataset_classes:
+                if len(self._get_schema().find_subclasses(dataset_class)) == 0:   
+                    try:
+                        result = self._persist_to_file(dataset_class, to_dir_path, include_date_fields)
+                        stats["exported"] += result
+                        time.sleep(self._wait_time_ms / 1000)
+                    except Exception as e:
+                        logger.error('Error exporting data for %s: %s', dataset_class, str(e))                     
         else:
             try:
                 result = self._persist_to_file(class_name, to_dir_path, include_date_fields)

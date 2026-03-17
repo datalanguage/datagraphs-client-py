@@ -37,6 +37,7 @@ class Client:
     DEFAULT_WAIT_TIME_MS = 200
     DEFAULT_FACET_SIZE = 10
     MAX_AUTH_RETRIES = 2
+    DATASETS_TIMEOUT_MS = 30000
     
     # HTTP status codes
     HTTP_OK = 200
@@ -431,7 +432,7 @@ class Client:
             logger.warning('Dataset results (%d) may have been truncated at page size limit (%d)', len(data), self.DEFAULT_DATASETS_PAGE_SIZE)
         return [Dataset.create_from(item) for item in data]
 
-    def apply_datasets(self, datasets: List[Dataset]) -> None:
+    def apply_datasets(self, datasets: List[Dataset], timeout_ms: int=DATASETS_TIMEOUT_MS) -> None:
         """Create or update datasets so they match the supplied list.
 
         Args:
@@ -445,7 +446,19 @@ class Client:
                 self.create_dataset(dataset)
             else:
                 self.update_dataset(dataset)
+        self._assert_datasets_applied(datasets, timeout_ms)
 
+    def _assert_datasets_applied(self, datasets: List[Dataset], timeout_ms: int) -> None:
+        count = 1
+        while len(self.get_datasets()) != len(datasets):
+            if (count * self.wait_time_ms) < timeout_ms:
+                logger.info('Waiting for datasets to be applied...')
+                count += 1
+                time.sleep(self.wait_time_ms / 1000)
+            else:
+                logger.error('Failed to apply datasets within timeout.')
+                raise DatagraphsError('Failed to apply datasets within timeout.')
+                
     def create_dataset(self, dataset: Dataset) -> None:
         """Create a new dataset.
 
@@ -454,6 +467,7 @@ class Client:
         """
         url = f'{self._base_url}datasets'
         self._request(HTTP.POST, url, json=dataset.to_dict(), headers=self._get_headers())
+
 
     def update_dataset(self, dataset: Dataset) -> None:
         """Update an existing dataset.

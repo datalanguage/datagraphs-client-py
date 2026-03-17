@@ -67,6 +67,7 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 uv sync                                          # create virtualenv & install deps
 uv run pytest tests -v                            # unit tests
 uv run pytest tests_integration -v                # integration tests
+uv run pytest tests -v --capture=tee-sys          # capturing stdout/stderr
 uv run pytest --cov=src --cov-report=html         # coverage report
 uvx ruff check .                                  # lint
 ```

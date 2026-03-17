@@ -47,9 +47,6 @@ def get_search_response(data: list, token: str = '') -> dict:
     }
     if len(token) > 0:
         resp['search']['nextPageToken'] = token
-
-    print(resp)
-
     return resp
 
 def get_faceted_search_response(data: list) -> dict:
@@ -424,9 +421,15 @@ class TestDatasetOperations:
 
     def test_should_create_datasets_when_applying_new_datasets(self, mocker):
         existing_datasets = []
-        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response(existing_datasets))
+        new_datasets = [{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]
+        self.client._http_client.request.side_effect = [
+            create_response_mock(mocker, 200, get_search_response(existing_datasets)),
+            create_response_mock(mocker, 201),
+            create_response_mock(mocker, 201),
+            create_response_mock(mocker, 200, get_search_response(new_datasets))
+        ]
         datasets = [Dataset(name='1', project='ds'), Dataset(name='2', project='ds')]
-        self.client.apply_datasets(datasets)
+        self.client.apply_datasets(datasets, timeout_ms=500)
         args, kwargs = self.client._http_client.request.call_args_list[1]
         assert args[0] == "post"
         assert args[1].startswith("https://api.datagraphs.io/test_project/datasets")
@@ -439,7 +442,7 @@ class TestDatasetOperations:
     def test_should_update_datasets_when_applying_existing_datasets(self, mocker):
         datasets = [Dataset(name='1', project='ds'), Dataset(name='2', project='ds')]
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
-        self.client.apply_datasets(datasets)
+        self.client.apply_datasets(datasets, timeout_ms=5)
         args, kwargs = self.client._http_client.request.call_args_list[1]
         assert args[0] == "put"
         assert args[1].startswith("https://api.datagraphs.io/test_project/datasets/1")
@@ -448,6 +451,17 @@ class TestDatasetOperations:
         assert args[0] == "put"
         assert args[1].startswith("https://api.datagraphs.io/test_project/datasets/2")
         assert kwargs['json']['id'] == 'urn:ds:2'
+
+    def test_should_raise_error_if_datasets_not_applied_within_expected_timeframe(self, mocker):
+        self.client._http_client.request.side_effect = [
+            create_response_mock(mocker, 200, get_search_response([])),
+            create_response_mock(mocker, 201),
+            create_response_mock(mocker, 201),
+            create_response_mock(mocker, 200, get_search_response([]))
+        ]
+        datasets = [Dataset(name='1', project='ds'), Dataset(name='2', project='ds')]
+        with pytest.raises(DatagraphsError):
+            self.client.apply_datasets(datasets, timeout_ms=0)
 
     def test_should_delete_data_from_dataset(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
