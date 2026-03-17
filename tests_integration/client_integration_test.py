@@ -80,7 +80,7 @@ class TestDataOperations:
         results = self.client.query(fields='name')
         assert len(results) == 4
         for r in results:
-            assert 'name' in r and not 'nickname' in r            
+            assert 'name' in r and 'nickname' not in r            
 
     def test_should_query_with_embed(self) -> None:
         results = self.client.query(embed='1')

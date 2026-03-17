@@ -1,4 +1,3 @@
-import pytest
 from datagraphs.dataset import Dataset
 
 class TestDataset:

@@ -3,7 +3,7 @@ import logging
 import os
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch, call
+from unittest.mock import MagicMock, mock_open, patch
 from datagraphs.enums import VALIDATION_MODE
 from datagraphs.gateway import Gateway as DatagraphsGateway
 from datagraphs.client import Client as DatagraphsClient
@@ -91,7 +91,7 @@ class TestDumpData:
         mock_client.get_datasets.return_value = [dataset]
         mock_schema.find_subclasses.side_effect = lambda name: [{'name': 'Child'}] if name == 'BaseClass' else []
         mock_client.get.return_value = []
-        result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
+        gateway.dump_data(to_dir_path=str(WORKING_DIR))
         mock_client.get.assert_called_once()
 
     def test_should_dump_multiple_datasets(self, gateway, mock_client, mock_schema):
@@ -100,7 +100,7 @@ class TestDumpData:
         mock_client.get_datasets.return_value = [ds1, ds2]
         mock_schema.find_subclasses.return_value = []
         mock_client.get.return_value = []
-        result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
+        gateway.dump_data(to_dir_path=str(WORKING_DIR))
         assert mock_client.get.call_count == 2
         mock_client.get.assert_any_call(class_name='TypeA', include_date_fields=False)
         mock_client.get.assert_any_call(class_name='TypeB', include_date_fields=False)
@@ -439,7 +439,7 @@ class TestGatewayEndToEnd:
         mock_client.get_datasets.return_value = [dataset]
         mock_schema.find_subclasses.return_value = []
         mock_client.get.return_value = substance_role_data
-        result = gateway.dump_data(to_dir_path=str(WORKING_DIR))
+        gateway.dump_data(to_dir_path=str(WORKING_DIR))
         assert mock_client.get.call_count == 3
         for class_name in ['TypeX', 'TypeY', 'TypeZ']:
             mock_client.get.assert_any_call(class_name=class_name, include_date_fields=False)

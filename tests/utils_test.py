@@ -1,7 +1,7 @@
 import json
 import pytest
 from pathlib import Path
-from datagraphs.utils import *
+from datagraphs.utils import get_type_from_urn, get_project_from_urn, get_id_from_urn, map_project_name
 from datagraphs.utils import SchemaTransformer
 
 TEMP_DIR = Path(__file__).parent.parent / 'temp'

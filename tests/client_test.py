@@ -209,7 +209,7 @@ class TestPagination:
         self.client.get('Test')
         assert self.client._http_client.request.call_count == 2
         args, kwargs = self.client._http_client.request.call_args_list[0]
-        assert f'&pageNo=1' in args[1]
+        assert '&pageNo=1' in args[1]
         assert '&pageSize=2' in args[1]
         args, kwargs = self.client._http_client.request.call_args_list[1]
         assert f'&nextPageToken={next_page_token}' in args[1]
