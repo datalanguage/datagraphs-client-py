@@ -30,7 +30,7 @@ class Schema:
 
     ALL_CLASSES = '__all_classes__'
 
-    def __init__(self, schema: Optional[dict] = None, name: str = "", version: str = '1.0', project: str = ''):
+    def __init__(self, schema: Optional[dict] = None, name: str = "", version: str = "", project: str = "") -> None:
         if schema is None or len(schema) == 0:
             schema = self._create_schema()
         else:
@@ -38,10 +38,11 @@ class Schema:
                 from datagraphs.utils import SchemaTransformer
                 schema = SchemaTransformer.old_to_new(schema)
             self._validate_schema(schema)
-        schema['name'] = f"{name or 'Domain Model'} v{version}"
-        schema['lastModifiedDate'] = datetime.datetime.now(datetime.UTC).isoformat()
-        self._version = version
+        self._version = version or '1.0'
         self._schema = schema
+        if name or version or len(schema.get('name', '')) == 0:
+            self._schema['name'] = f"{name or 'Domain Model'} v{self.version}"
+        self._schema['lastModifiedDate'] = datetime.datetime.now(datetime.UTC).isoformat()
 
     @property
     def classes(self) -> list[dict]:
@@ -64,7 +65,7 @@ class Schema:
     def _create_schema() -> dict:
         now = datetime.datetime.now(datetime.UTC).isoformat()
         return {
-            "name": "Domain Model",
+            "name": "",
             "createdDate": now,
             "lastModifiedDate": now,
             "classes": [],

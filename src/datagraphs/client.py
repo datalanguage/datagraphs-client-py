@@ -450,6 +450,7 @@ class Client:
 
     def _assert_datasets_applied(self, datasets: List[Dataset], timeout_ms: int) -> None:
         count = 1
+        logger.info('Verifying all datasets have been applied...')
         while len(self.get_datasets()) != len(datasets):
             if (count * self.wait_time_ms) < timeout_ms:
                 logger.info('Waiting for datasets to be applied...')
@@ -458,6 +459,7 @@ class Client:
             else:
                 logger.error('Failed to apply datasets within timeout.')
                 raise DatagraphsError('Failed to apply datasets within timeout.')
+        logger.info('All datasets have been applied successfully.')
                 
     def create_dataset(self, dataset: Dataset) -> None:
         """Create a new dataset.
