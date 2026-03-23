@@ -59,3 +59,13 @@ class TestDataset:
             "id": "urn:test_project:test-dataset"
         }
         assert dataset.to_dict() == expected_dict
+
+    def test_should_be_equal_when_dicts_match(self):
+        first = Dataset(name="Test Dataset", account="test_account", project="test_project", classes=["Class1"])
+        second = Dataset(name="Test Dataset", account="test_account", project="test_project", classes=["Class1"])
+        assert first == second
+
+    def test_should_not_be_equal_when_dicts_differ(self):
+        first = Dataset(name="Test Dataset", account="test_account", project="test_project")
+        second = Dataset(name="Other Dataset", account="test_account", project="test_project")
+        assert first != second

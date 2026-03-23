@@ -5,13 +5,17 @@ A Python client library for the [DataGraphs](https://datagraphs.com) knowledge-g
 ## Installation
 
 ```bash
+uv add pydatagraphs
+```
+or
+```bash
 pip install pydatagraphs
 ```
 
-## Quick start
+## Quick starts
 
 ```python
-from datagraphs import Client, Gateway, Schema
+from datagraphs import Client
 
 # Connect to a project
 client = Client(
@@ -26,16 +30,54 @@ print(client.status())
 products = client.get("Product")
 
 # Query with filters and pagination
-results = client.query(filters="type:Product", page_size=50)
+results = client.query(q="Acme", page_size=50)
+```
 
-# Read the project schema
+```python
+from datagraphs import Client, Gateway, Schema
+
+# Connect to a project
+client = Client(
+    project_name="my-project",
+    api_key="your-api-key",
+)
+
+# Read the project schema and dataset configurations
 schema = client.get_schema()
+schema = client.get_datasets()
+
+# Update the project schema and dataset configurations
+client.apply_schema(schema)
+client.apply_datasets(datasets)
+```
+
+```python
+from datagraphs import Client, Gateway, Dataset
+
+# Connect to a project
+client = Client(
+    project_name="my-project",
+    api_key="your-api-key",
+)
+gateway = Gateway(client, schema)
 
 # Load / dump data via the Gateway
-gateway = Gateway(client, schema)
 gateway.dump_data("./backup")
 gateway.load_data(from_dir_path="./backup")
+
+# Load / dump project via the Gateway
+schema_output_path = "./schemas/"
+datasets_output_path = "./datasets/"
+gateway.dump_project(schema_output_path, datasets_output_path)
+
+schema_data = load_json("./schemas/myproject-model-v1.0.json")
+datasets_data = load_json("./datasets/myproject-datasets-v1.0.json")
+schema = Schema.create_from(schema_data)
+datasets = [Dataset.create_from(dataset) for dataset in datasets]
+gateway.load_project(schema, datasets)
+
 ```
+For full API documentation, please see [here](./API.md)
 
 ## Authentication
 
@@ -54,8 +96,8 @@ client = Client(
 
 | Class | Description |
 |-------|-------------|
-| `Client` | Low-level HTTP client for the DataGraphs REST API |
-| `Gateway` | High-level helper that loads/dumps JSON files to/from a project |
+| `Client` | Lower-level HTTP client for the DataGraphs REST API |
+| `Gateway` | Higher-level wrapper class for deploying projects and bulk export/load of data |
 | `Schema` | In-memory representation of a project's domain model |
 | `Dataset` | Represents a dataset within a project |
 

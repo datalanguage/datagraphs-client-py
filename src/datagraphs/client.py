@@ -417,7 +417,7 @@ class Client:
         """
         url = f'{self._base_url}models/_active?t={self._cache_buster()}'
         response = self._request(HTTP.GET, url, headers=self._get_headers())        
-        return DatagraphsSchema(response)
+        return DatagraphsSchema.create_from(response)
         
     def get_datasets(self) -> List[Dataset]:
         """Retrieve all datasets in the project.
@@ -444,13 +444,13 @@ class Client:
             match = next((d for d in target_datasets if d.slug == dataset.slug), None)
             if match is None:
                 self.create_dataset(dataset)
-            else:
+            elif match != dataset:
                 self.update_dataset(dataset)
         self._assert_datasets_applied(datasets, timeout_ms)
 
     def _assert_datasets_applied(self, datasets: List[Dataset], timeout_ms: int) -> None:
         count = 1
-        logger.info('Verifying all datasets have been applied...')
+        logger.info('Verifying all datasets have been applied successfully...')
         while len(self.get_datasets()) != len(datasets):
             if (count * self.wait_time_ms) < timeout_ms:
                 logger.info('Waiting for datasets to be applied...')
@@ -488,12 +488,26 @@ class Client:
         """
         logger.info('Clearing down data from dataset: %s', dataset_slug)
         url = f'{self._base_url}{dataset_slug}?filter=_all'
+
+        print(url)
+
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
-    def tear_down(self) -> None:
+    def drop_dataset(self, dataset_slug: str) -> None:
+        """Drop a dataset and all its data.
+
+        Args:
+            dataset_slug: The slug of the dataset to drop.
+        """
+        logger.info('Dropping dataset: %s', dataset_slug)
+        url = f'{self._base_url}datasets/{dataset_slug}'
+        self._request(HTTP.DELETE, url, headers=self._get_headers())
+
+    def tear_down(self, drop_datasets: bool = True) -> None:
         """Delete all datasets and their data from the project."""
         datasets = self.get_datasets()
         for dataset in datasets:
-            logger.info('Dropping dataset: %s', dataset.slug)
-            url = f'{self._base_url}datasets/{dataset.slug}'
-            self._request(HTTP.DELETE, url, headers=self._get_headers())
+            if drop_datasets:
+                self.drop_dataset(dataset.slug)
+            else:
+                self.clear_dataset(dataset.slug)    

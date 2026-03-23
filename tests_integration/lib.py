@@ -30,11 +30,11 @@ def get_client(config_key: str) -> DatagraphsClient:
             print("Unrecognised config key - please select from: "+", ".join(config.keys()))
 
 def get_empty_schema() -> DatagraphsSchema:
-    schema = DatagraphsSchema(project='pydg')
+    schema = DatagraphsSchema()
     return schema
 
 def get_schema() -> DatagraphsSchema:
-    schema = DatagraphsSchema(project='pydg')
+    schema = DatagraphsSchema()
     schema.create_class("Cat", label_prop_name="name", description="Goes meow")
     schema.create_property("Cat", "nickname", description="Nickname", datatype=DATATYPE.KEYWORD)
     schema.create_property("Cat", "naps", description="Number of naps", datatype=DATATYPE.INTEGER)

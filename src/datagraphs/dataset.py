@@ -59,6 +59,17 @@ class Dataset:
     def _sanitise_name(self, value: str) -> str:
         return value.lower().replace(" ", "-")
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Dataset):
+            return NotImplemented
+        return self.to_dict() == other.to_dict()
+
+    def __ne__(self, other: object) -> bool:
+        result = self.__eq__(other)
+        if result is NotImplemented:
+            return NotImplemented
+        return not result
+
     def to_dict(self) -> dict:
         return {
             "name": self.name,

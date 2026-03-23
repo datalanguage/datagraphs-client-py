@@ -4,6 +4,7 @@ import json
 import datetime
 from typing import Optional, Self, Union
 from datagraphs.enums import DATATYPE
+from datagraphs.utils import SchemaTransformer
 
 class SchemaError(Exception):
     """Base exception for Schema-related errors."""
@@ -30,28 +31,26 @@ class Schema:
 
     ALL_CLASSES = '__all_classes__'
 
-    def __init__(self, schema: Optional[dict] = None, name: str = "", version: str = "", project: str = "") -> None:
-        if schema is None or len(schema) == 0:
-            schema = self._create_schema()
-        else:
-            if self._is_legacy_format(schema):
-                from datagraphs.utils import SchemaTransformer
-                schema = SchemaTransformer.old_to_new(schema)
-            self._validate_schema(schema)
-        self._version = version or '1.0'
-        self._schema = schema
-        if name or version or len(schema.get('name', '')) == 0:
-            self._schema['name'] = f"{name or 'Domain Model'} v{self.version}"
-        self._schema['lastModifiedDate'] = datetime.datetime.now(datetime.UTC).isoformat()
+    def __init__(self, name: str = "", version: str = "") -> None:
+        if isinstance(name, dict):
+            raise TypeError("Schema constructor expects keyword arguments, not a dict. Use Schema.create_from() to create a schema from a dict.")
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        self._schema = {
+            "name": "",
+            "createdDate": now,
+            "lastModifiedDate": now,
+            "classes": [],
+        }
+        self._update_schema_metadata(name, version)
 
-    @property
-    def classes(self) -> list[dict]:
-        return self._schema["classes"]
+    @staticmethod
+    def create_from(data: dict, version: str = "") -> Self:
+        if Schema._is_legacy_format(data):
+            data = SchemaTransformer.old_to_new(data)
+        schema = Schema(version=version)
+        schema._set_internal_schema(data, version)
+        return schema
 
-    @property
-    def version(self) -> str:
-        return self._version
-    
     @staticmethod
     def _is_legacy_format(schema: dict) -> bool:
         """Detect whether a schema dict uses the legacy (old) format."""
@@ -61,30 +60,36 @@ class Schema:
             return 'objectProperties' in first or ('label' in first and 'type' not in first)
         return 'guid' in schema
 
-    @staticmethod
-    def _create_schema() -> dict:
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-        return {
-            "name": "",
-            "createdDate": now,
-            "lastModifiedDate": now,
-            "classes": [],
-        }
+    def _update_schema_metadata(self, name: str = "", version: str = "") -> None:
+        self._version = version or '1.0'
+        self._schema['lastModifiedDate'] = datetime.datetime.now(datetime.UTC).isoformat()
+        if name or version or len(self._schema.get('name', '')) == 0:
+            self._schema['name'] = f"{name or 'Domain Model'} v{self.version}"
 
-    @staticmethod
-    def _validate_schema(schema: dict) -> None:
+    def _set_internal_schema(self, data: dict, version: str) -> None:
+        self._validate_schema(data)
+        self._update_schema_metadata(version=version)
+        self._schema = data
+
+    def _validate_schema(self, schema: dict) -> None:
         required_keys = {'name', 'createdDate', 'lastModifiedDate', 'classes'}
         if not all(key in schema for key in required_keys):
             missing_keys = required_keys - set(schema.keys())
             raise SchemaError(f"Invalid schema. Missing keys: {', '.join(missing_keys)}")
 
-    @staticmethod
-    def _make_description(text: str) -> dict:
+    @property
+    def classes(self) -> list[dict]:
+        return self._schema["classes"]
+
+    @property
+    def version(self) -> str:
+        return self._version
+    
+    def _make_description(self, text: str) -> dict:
         """Create a description dict in the new format."""
         return {"en": text, "@none": text}
 
-    @staticmethod
-    def _get_description_text(desc) -> str:
+    def _get_description_text(self, desc: Union[str, dict]) -> str:
         """Extract plain text from a description (handles both str and dict)."""
         if isinstance(desc, dict):
             return desc.get('@none', desc.get('en', ''))
@@ -429,7 +434,7 @@ class Schema:
                 class_def['properties'] = ordered + remaining
 
     def clone(self) -> Self:
-        return Schema(json.loads(json.dumps(self._schema)))
+        return Schema.create_from(json.loads(json.dumps(self._schema)))
 
     def to_dict(self) -> dict:
         return self._schema

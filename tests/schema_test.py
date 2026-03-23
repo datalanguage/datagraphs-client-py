@@ -27,7 +27,7 @@ class TestSchemaInitialization:
                 "isAbstract": False,
             }]
         }
-        schema = DatagraphsSchema(data)
+        schema = DatagraphsSchema.create_from(data)
         assert len(schema.classes) == 1
         assert schema.classes[0]["name"] == "TestClass"
 
@@ -65,7 +65,7 @@ class TestSchemaInitialization:
                 }]
             }]
         }
-        schema = DatagraphsSchema(data)
+        schema = DatagraphsSchema.create_from(data)
         assert len(schema.classes) == 1
         assert schema.classes[0]["name"] == "TestClass"
         assert schema.classes[0]["type"] == "Class"
@@ -76,7 +76,11 @@ class TestSchemaInitialization:
             "something": "unexpected",
         }
         with pytest.raises(SchemaError):
-            DatagraphsSchema(invalid_data)
+            DatagraphsSchema.create_from(invalid_data)
+
+    def test_should_raise_error_if_dict_passed_to_constructor(self):
+        with pytest.raises(TypeError):
+            DatagraphsSchema({"name": "Invalid"})
 
     def test_should_generate_correct_name_with_version(self):
         schema = DatagraphsSchema(name="Custom Model", version="2.0")

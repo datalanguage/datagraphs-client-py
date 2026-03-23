@@ -384,7 +384,13 @@ class TestSchemaOperations:
         self.client = get_client('test_client_id', 'test_client_secret')
 
     def test_should_get_schema_for_project(self, mocker):
-        self.client._http_client.request.return_value = create_response_mock(mocker, 200, None)
+        schema_response_data = {
+            "name": "Model",
+            "createdDate": "2024-06-01T00:00:00Z",
+            "lastModifiedDate": "2024-06-01T00:00:00Z",
+            "classes": []
+        }
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, schema_response_data)
         self.client.get_schema()
         args, kwargs = self.client._http_client.request.call_args
         assert args[1].startswith("https://api.datagraphs.io/test_project/models/_active?")
@@ -397,7 +403,7 @@ class TestSchemaOperations:
             "lastModifiedDate": "2024-06-01T00:00:00Z",
             "classes": []
         }
-        self.client.apply_schema(DatagraphsSchema(schema_data))
+        self.client.apply_schema(DatagraphsSchema.create_from(schema_data))
         args, kwargs = self.client._http_client.request.call_args
         assert args[0] == "put"
         assert args[1].startswith("https://api.datagraphs.io/test_project/models/_active")
@@ -471,13 +477,31 @@ class TestDatasetOperations:
         assert args[0] == "delete"
         assert args[1] == "https://api.datagraphs.io/test_project/1?filter=_all"
 
-    def test_should_delete_existing_datasets_during_teardown(self, mocker):
+    def test_should_drop_dataset(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
-        self.client.tear_down()
+        dataset = Dataset(name='1', project='ds')
+        self.client.drop_dataset(dataset.slug)
+        args, kwargs = self.client._http_client.request.call_args_list[0]
+        assert args[0] == "delete"
+        assert args[1] == "https://api.datagraphs.io/test_project/datasets/1"
+
+    def test_should_drop_existing_datasets_during_hard_teardown(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
+        self.client.tear_down(drop_datasets=True)
         args, kwargs = self.client._http_client.request.call_args_list[1]
         assert args[0] == "delete"
         assert args[1] == "https://api.datagraphs.io/test_project/datasets/1"
         args, kwargs = self.client._http_client.request.call_args_list[2]
         assert args[0] == "delete"
         assert args[1] == "https://api.datagraphs.io/test_project/datasets/2"
+
+    def test_should_clear_existing_datasets_during_soft_teardown(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
+        self.client.tear_down(drop_datasets=False)
+        args, kwargs = self.client._http_client.request.call_args_list[1]
+        assert args[0] == "delete"
+        assert args[1] == "https://api.datagraphs.io/test_project/1?filter=_all"
+        args, kwargs = self.client._http_client.request.call_args_list[2]
+        assert args[0] == "delete"
+        assert args[1] == "https://api.datagraphs.io/test_project/2?filter=_all"
 

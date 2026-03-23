@@ -29,8 +29,8 @@ class TestDataOperations:
     @pytest.fixture(scope="class",autouse=True)
     def setup(self, request):
         request.cls.client = get_client('integration-testing')
+        request.cls.client.tear_down(drop_datasets=False) 
         request.cls.client.apply_schema(get_schema())
-        request.cls.client.tear_down() 
         request.cls.client.apply_datasets(get_datasets())
         request.cls.client.put('pets', get_data())
 
