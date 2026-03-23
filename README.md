@@ -103,7 +103,7 @@ client = Client(
 
 | Class | Description |
 |-------|-------------|
-| `Client` | Lower-level HTTP client for the DataGraphs REST API |
+| `Client` | HTTP client for the DataGraphs REST API |
 | `Gateway` | Higher-level wrapper class for deploying projects and bulk export/load of data |
 | `Schema` | In-memory representation of a project's domain model |
 | `Dataset` | Represents a dataset within a project |
