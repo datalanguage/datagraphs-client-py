@@ -23,12 +23,18 @@ class HTTP(Enum):
         return str(self.value)
 
 class DatagraphsError(Exception):
+    """Base exception for DataGraphs client errors."""
     pass
 
 class AuthenticationError(DatagraphsError):
+    """Raised when authentication or authorisation fails."""
     pass
 
 class Client:
+    """Low-level HTTP client for the DataGraphs REST API.
+
+    Handles authentication, pagination, and batched writes.
+    """
 
     PROD_URL = "https://api.datagraphs.io/"
     AUTH_URL_SUFFIX = "oauth/token"
@@ -57,16 +63,14 @@ class Client:
         batch_size: int = DEFAULT_BATCH_SIZE, 
         service_url: str = PROD_URL
     ) -> None:
-        """
-        Initialize the Datagraphs client.
-        
-        Args:
-            project_name: Name of the project
-            api_key: API key for authentication
-            client_id: OAuth client ID (optional)
-            client_secret: OAuth client secret (optional)
-            batch_size: Number of items to process in each batch
-            service_url: Base URL for the API service
+        """Initialise the DataGraphs client.
+
+        :param project_name: Name of the project.
+        :param api_key: API key for authentication.
+        :param client_id: OAuth client ID (required for write operations).
+        :param client_secret: OAuth client secret (required for write operations).
+        :param batch_size: Number of items to process in each batch.
+        :param service_url: Base URL for the API service.
         """
         self.project_name = project_name
         self._api_key = api_key
@@ -85,18 +89,13 @@ class Client:
     def set_wait_time(self, wait_time_ms: int) -> None:
         """Set the wait time between paginated requests.
 
-        Args:
-            wait_time_ms: Wait time in milliseconds.
+        :param wait_time_ms: Wait time in milliseconds.
         """
         self._wait_time_ms = wait_time_ms
 
     @property
     def wait_time_ms(self) -> int:
-        """Get the current wait time between paginated requests.
-
-        Returns:
-            The wait time in milliseconds.
-        """
+        """The current wait time in milliseconds between paginated requests."""
         return self._wait_time_ms
 
     def _get_auth_token(self, force_refresh=False) -> str:
@@ -126,18 +125,14 @@ class Client:
     def _request(self, method: HTTP, url: str, _retry_count: int = 0, **kwargs) -> Optional[Dict[str, Any]]:
         """Execute an HTTP request with automatic auth retry.
 
-        Args:
-            method: The HTTP method to use.
-            url: The request URL.
-            _retry_count: Internal retry counter (do not set externally).
-            **kwargs: Additional arguments forwarded to the HTTP client.
-
-        Returns:
-            Parsed JSON response for GET requests, or ``None`` for mutating requests.
-
-        Raises:
-            AuthenticationError: If authentication fails after max retries.
-            DatagraphsError: If the request fails for any other reason.
+        :param method: The HTTP method to use.
+        :param url: The request URL.
+        :param _retry_count: Internal retry counter (do not set externally).
+        :param kwargs: Additional arguments forwarded to the HTTP client.
+        :returns: Parsed JSON response for GET requests, or ``None`` for
+            mutating requests.
+        :raises AuthenticationError: If authentication fails after max retries.
+        :raises DatagraphsError: If the request fails for any other reason.
         """
         try:
             if 'headers' in kwargs and method in [HTTP.PUT, HTTP.POST]:
@@ -210,8 +205,7 @@ class Client:
     def status(self) -> str:
         """Check the API service status.
 
-        Returns:
-            The API status string, or ``'unknown'`` if unavailable.
+        :returns: The API status string, or ``'unknown'`` if unavailable.
         """
         url = f'{self._service_url}status?t={self._cache_buster()}'
         response = self._request(HTTP.GET, url, headers=self._get_headers())
@@ -222,13 +216,10 @@ class Client:
 
         Automatically paginates through all results.
 
-        Args:
-            class_name: The entity class to fetch.
-            lang: Language code for results (default ``'all'``).
-            include_date_fields: Whether to include system date metadata.
-
-        Returns:
-            A list of entity dicts.
+        :param class_name: The entity class to fetch.
+        :param lang: Language code for results (default ``'all'``).
+        :param include_date_fields: Whether to include system date metadata.
+        :returns: A list of entity dicts.
         """
         page_no = 1
         resp = self._request(
@@ -320,29 +311,26 @@ class Client:
             next_page_token: str = '',
             include_date_fields: bool = False
         ) -> Union[List[Dict[str, Any]], tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
-        """
-        Query the API with various filters and options.
-        
-        Args:
-            dataset: Dataset to query
-            q: Search query string
-            filters: Filter string
-            facets: Facets to include
-            facet_size: Number of facet values to return
-            date_facets: Date facets to include
-            fields: Fields to return
-            embed: Related entities to embed
-            sort: Sort order
-            ids: Specific IDs to fetch
-            lang: Language code
-            page_no: Page number (0-indexed)
-            page_size: Number of results per page
-            previous_page_token: Token for previous page
-            next_page_token: Token for next page
-            include_date_fields: Whether to include date fields
-            
-        Returns:
-            List of results
+        """Query the API with filters, facets, sorting, and pagination.
+
+        :param dataset: Dataset slug to query (default ``'_all'``).
+        :param q: Free-text search query string.
+        :param filters: Filter expression (e.g. ``'type:Person'``).
+        :param facets: Comma-separated facet field names.
+        :param facet_size: Number of facet values to return (default ``10``).
+        :param date_facets: Date facet specification.
+        :param fields: Comma-separated field names to include in results.
+        :param embed: Embedding depth for related entities.
+        :param sort: Sort expression (e.g. ``'label:asc'``).
+        :param ids: Comma-separated entity IDs to fetch directly.
+        :param lang: Language code for results (default ``'all'``).
+        :param page_no: Page number for offset-based pagination.
+        :param page_size: Number of results per page.
+        :param previous_page_token: Token for cursor-based backward pagination.
+        :param next_page_token: Token for cursor-based forward pagination.
+        :param include_date_fields: Whether to include system date metadata.
+        :returns: A list of result dicts, or a ``(results, facets)`` tuple when
+            facets are requested.
         """
         if page_size == -1:
             page_size = self._batch_size
@@ -368,12 +356,12 @@ class Client:
     def put(self, dataset: str, data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> int:
         """Load entities into a dataset.
 
-        Args:
-            dataset: Target dataset slug.
-            data: A single entity dict or list of entity dicts.
+        Automatically batches large payloads according to the configured
+        ``batch_size``.
 
-        Returns:
-            The number of entities loaded.
+        :param dataset: Target dataset slug.
+        :param data: A single entity dict or a list of entity dicts.
+        :returns: The number of entities loaded.
         """
         entities = [data] if isinstance(data, dict) else data
         length = len(entities)
@@ -391,19 +379,17 @@ class Client:
     def delete(self, class_name: str, entity_id: str) -> None:
         """Delete a single entity by class and ID.
 
-        Args:
-            class_name: The entity class.
-            entity_id: The entity identifier.
+        :param class_name: The entity class.
+        :param entity_id: The entity identifier.
         """
         url = f'{self._base_url}{class_name}/{entity_id}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
 
     def apply_schema(self, schema: DatagraphsSchema) -> None:
-        """Apply a schema to the project.
+        """Apply a schema to the project, replacing the currently active domain model.
 
-        Args:
-            schema: The schema to apply.
+        :param schema: The schema to apply.
         """
         logger.info('Applying schema to project: %s', self.project_name)
         url = f'{self._base_url}models/_active'
@@ -412,8 +398,7 @@ class Client:
     def get_schema(self) -> DatagraphsSchema:
         """Retrieve the active schema for the project.
 
-        Returns:
-            The current project schema.
+        :returns: The current project `Schema`.
         """
         url = f'{self._base_url}models/_active?t={self._cache_buster()}'
         response = self._request(HTTP.GET, url, headers=self._get_headers())        
@@ -422,8 +407,7 @@ class Client:
     def get_datasets(self) -> List[Dataset]:
         """Retrieve all datasets in the project.
 
-        Returns:
-            A list of Dataset objects.
+        :returns: A list of `Dataset` objects.
         """
         url = f'{self._base_url}?pageSize={self.DEFAULT_DATASETS_PAGE_SIZE}&t={self._cache_buster()}'
         resp = self._request(HTTP.GET, url, headers=self._get_headers())
@@ -435,8 +419,13 @@ class Client:
     def apply_datasets(self, datasets: List[Dataset], timeout_ms: int=DATASETS_TIMEOUT_MS) -> None:
         """Create or update datasets so they match the supplied list.
 
-        Args:
-            datasets: Datasets to apply.
+        New datasets are created; existing datasets with changes are updated.
+        Waits for confirmation that all datasets have been applied.
+
+        :param datasets: Datasets to apply.
+        :param timeout_ms: Maximum time in milliseconds to wait for the API to
+            confirm all datasets are applied.
+        :raises DatagraphsError: If datasets are not applied within the timeout.
         """
         logger.info('Applying datasets update to project: %s', self.project_name)
         target_datasets = self.get_datasets()
@@ -464,8 +453,7 @@ class Client:
     def create_dataset(self, dataset: Dataset) -> None:
         """Create a new dataset.
 
-        Args:
-            dataset: The dataset to create.
+        :param dataset: The dataset to create.
         """
         url = f'{self._base_url}datasets'
         self._request(HTTP.POST, url, json=dataset.to_dict(), headers=self._get_headers())
@@ -474,17 +462,15 @@ class Client:
     def update_dataset(self, dataset: Dataset) -> None:
         """Update an existing dataset.
 
-        Args:
-            dataset: The dataset to update.
+        :param dataset: The dataset to update (matched by slug).
         """
         url = f'{self._base_url}datasets/{dataset.slug}'
         self._request(HTTP.PUT, url, json=dataset.to_dict(), headers=self._get_headers())
 
     def clear_dataset(self, dataset_slug: str) -> None:
-        """Delete all data from a dataset.
+        """Delete all data from a dataset, keeping the dataset itself intact.
 
-        Args:
-            dataset_slug: The slug of the dataset to clear.
+        :param dataset_slug: The slug of the dataset to clear.
         """
         logger.info('Clearing down data from dataset: %s', dataset_slug)
         url = f'{self._base_url}{dataset_slug}?filter=_all'
@@ -494,17 +480,20 @@ class Client:
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
     def drop_dataset(self, dataset_slug: str) -> None:
-        """Drop a dataset and all its data.
+        """Drop a dataset and all its data entirely.
 
-        Args:
-            dataset_slug: The slug of the dataset to drop.
+        :param dataset_slug: The slug of the dataset to drop.
         """
         logger.info('Dropping dataset: %s', dataset_slug)
         url = f'{self._base_url}datasets/{dataset_slug}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
     def tear_down(self, drop_datasets: bool = True) -> None:
-        """Delete all datasets and their data from the project."""
+        """Remove all datasets and their data from the project.
+
+        :param drop_datasets: If ``True``, drops each dataset entirely.
+            If ``False``, only clears the data from each dataset.
+        """
         datasets = self.get_datasets()
         for dataset in datasets:
             if drop_datasets:

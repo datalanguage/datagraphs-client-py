@@ -1,6 +1,5 @@
 import pytest
 import json
-import os
 from pathlib import Path
 from datagraphs.enums import VALIDATION_MODE
 from lib import get_client, get_data, get_datasets, get_gateway, get_schema

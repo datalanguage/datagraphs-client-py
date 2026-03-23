@@ -32,6 +32,12 @@ class Schema:
     ALL_CLASSES = '__all_classes__'
 
     def __init__(self, name: str = "", version: str = "") -> None:
+        """Create a new empty schema.
+
+        :param name: Model name. Defaults to ``'Domain Model'`` if empty.
+        :param version: Schema version. Defaults to ``'1.0'`` if empty.
+        :raises TypeError: If a ``dict`` is passed instead of keyword arguments.
+        """
         if isinstance(name, dict):
             raise TypeError("Schema constructor expects keyword arguments, not a dict. Use Schema.create_from() to create a schema from a dict.")
         now = datetime.datetime.now(datetime.UTC).isoformat()
@@ -45,6 +51,15 @@ class Schema:
 
     @staticmethod
     def create_from(data: dict, version: str = "") -> Self:
+        """Create a `Schema` from a dictionary.
+
+        Automatically detects and converts legacy-format schemas.
+
+        :param data: Schema dictionary (new or legacy format).
+        :param version: Schema version override.
+        :returns: A new `Schema` instance.
+        :raises SchemaError: If the dict is missing required keys.
+        """
         if Schema._is_legacy_format(data):
             data = SchemaTransformer.old_to_new(data)
         schema = Schema(version=version)
@@ -79,10 +94,12 @@ class Schema:
 
     @property
     def classes(self) -> list[dict]:
+        """The list of class definitions in the schema."""
         return self._schema["classes"]
 
     @property
     def version(self) -> str:
+        """The schema version string."""
         return self._version
     
     def _make_description(self, text: str) -> dict:
@@ -103,6 +120,16 @@ class Schema:
         label_prop_name: str = "label",
         is_label_prop_lang_string: bool = True,
     ) -> None:
+        """Create a new class in the schema.
+
+        :param class_name: Name of the new class.
+        :param description: Human-readable description.
+        :param parent_class_name: Name of the parent class (for inheritance).
+        :param label_prop_name: Name of the label property created by default.
+        :param is_label_prop_lang_string: Whether the label property supports
+            multiple languages.
+        :raises SchemaError: If a class with the same name already exists.
+        """
         existing_class = self.find_class(class_name)
         if existing_class is not None:
             raise SchemaError(f"The class '{class_name}' already exists in the schema")
@@ -132,6 +159,13 @@ class Schema:
         self._schema['classes'].append(class_def)
 
     def create_subclass(self, class_name: str, description: str, parent_class_name: str) -> None:
+        """Create a subclass that inherits all properties from the parent class.
+
+        :param class_name: Name of the new subclass.
+        :param description: Description for the subclass.
+        :param parent_class_name: Name of the parent class to inherit from.
+        :raises ClassNotFoundError: If the parent class does not exist.
+        """
         class_def = self.find_class(parent_class_name)
         if class_def is None:
             raise ClassNotFoundError(f"Parent class '{parent_class_name}' not found")
@@ -165,6 +199,14 @@ class Schema:
                 )
 
     def update_class(self, class_name: str, new_name: str = "", new_description: str = "", parent_class_name: str = "") -> None:
+        """Update a class's name, description, or parent class.
+
+        :param class_name: Current class name.
+        :param new_name: New class name, or empty to leave unchanged.
+        :param new_description: New description, or empty to leave unchanged.
+        :param parent_class_name: New parent class. Empty string removes the parent.
+        :raises ClassNotFoundError: If the class does not exist.
+        """
         class_def = self.find_class(class_name)
         if class_def is None:
             raise ClassNotFoundError(f"Class '{class_name}' not found")
@@ -178,6 +220,15 @@ class Schema:
             class_def['description'] = self._make_description(new_description)
 
     def delete_class(self, class_name: str, include_linked_properties: bool = False, cascade_to_subclasses: bool = True) -> None:
+        """Delete a class from the schema.
+
+        :param class_name: Name of the class to delete.
+        :param include_linked_properties: If ``True``, also removes ObjectProperties
+            on other classes that reference this class.
+        :param cascade_to_subclasses: If ``True``, removes ``subClassOf`` links
+            from any subclasses of the deleted class.
+        :raises ClassNotFoundError: If the class does not exist.
+        """
         class_def = self.find_class(class_name)
         if class_def is None:
             raise ClassNotFoundError(f"Class '{class_name}' not found")
@@ -190,6 +241,16 @@ class Schema:
                     other_def.pop("subClassOf", None)
 
     def assign_label_property(self, class_name: str, prop_name: str, is_lang_string: bool = True) -> None:
+        """Designate an existing property as the label property for a class.
+
+        The property is also marked as required (``isOptional=False``).
+
+        :param class_name: Class name.
+        :param prop_name: Property name to use as the label.
+        :param is_lang_string: Whether the label supports multiple languages.
+        :raises ClassNotFoundError: If the class does not exist.
+        :raises PropertyNotFoundError: If the property does not exist on the class.
+        """
         class_def = self.find_class(class_name)
         if class_def is None:
             raise ClassNotFoundError(f"Class '{class_name}' not found")
@@ -201,6 +262,13 @@ class Schema:
         prop_def["isLangString"] = is_lang_string
 
     def assign_label_autogen(self, class_name: str, pattern: str) -> None:
+        """Set an auto-generation pattern on the label property of a class.
+
+        :param class_name: Class name.
+        :param pattern: Auto-generation expression.
+        :raises ClassNotFoundError: If the class does not exist.
+        :raises PropertyNotFoundError: If the label property does not exist.
+        """
         class_def = self.find_class(class_name)
         if class_def is None:
             raise ClassNotFoundError(f"Class '{class_name}' not found")
@@ -211,12 +279,24 @@ class Schema:
         prop_def['propertyValuePattern'] = pattern
 
     def assign_baseclass(self, class_name: str, parent_class_name: str) -> None:
+        """Set or change the parent (base) class for an existing class.
+
+        :param class_name: The class to modify.
+        :param parent_class_name: The new parent class name.
+        :raises ClassNotFoundError: If *class_name* does not exist.
+        """
         class_def = self.find_class(class_name)
         if class_def is None:
             raise ClassNotFoundError(f"Class '{class_name}' not found")
         class_def['subClassOf'] = parent_class_name
 
     def assign_class_description(self, class_name: str, description: str) -> None:
+        """Set or clear the description of a class.
+
+        :param class_name: Class name.
+        :param description: New description. Pass an empty string to remove it.
+        :raises ClassNotFoundError: If the class does not exist.
+        """
         class_def = self.find_class(class_name)
         if class_def is None:
             raise ClassNotFoundError(f"Class '{class_name}' not found")
@@ -251,6 +331,30 @@ class Schema:
         is_filterable: bool = False,
         apply_to_subclasses: bool = False,
     ) -> None:
+        """Create a new property on a class.
+
+        :param class_name: Class to add the property to.
+        :param prop_name: Property name.
+        :param datatype: A `DATATYPE` enum value for primitive types, or a class
+            name string for object (relationship) properties.
+        :param description: Human-readable description.
+        :param is_optional: Whether the property is optional.
+        :param is_array: Whether the property holds multiple values.
+        :param is_nested: Whether an object property is nested (embedded).
+        :param is_lang_string: For text properties, whether to support multiple
+            languages.
+        :param inverse_of: Name of the inverse property on the target class
+            (object properties only).
+        :param enums: Allowed values for ``DATATYPE.ENUM`` properties.
+        :param is_synonym: Whether this property is a label synonym.
+        :param is_filterable: Whether the property is available as a facet/filter.
+        :param apply_to_subclasses: If ``True``, also creates the property on all
+            existing subclasses.
+        :raises ClassNotFoundError: If the class (or referenced class) does not exist.
+        :raises PropertyExistsError: If a property with the same name already exists.
+        :raises InvalidInversePropertyError: If the inverse property specification
+            is invalid.
+        """
         if enums is None:
             enums = []
         class_def = self.find_class(class_name)
@@ -364,6 +468,28 @@ class Schema:
         is_filterable: bool = None,
         apply_to_subclasses: bool = None,
     ) -> None:
+        """Update an existing property on a class.
+
+        Only parameters that are explicitly provided (non-``None``) will be
+        changed.
+
+        :param class_name: Class containing the property.
+        :param prop_name: Property name to update.
+        :param datatype: New data type.
+        :param description: New description.
+        :param is_optional: Whether the property is optional.
+        :param is_array: Whether the property holds multiple values.
+        :param is_nested: Whether an object property is nested.
+        :param is_lang_string: Whether the property supports multiple languages.
+        :param inverse_of: Name of the inverse property on the target class.
+        :param enums: Allowed enumeration values.
+        :param is_synonym: Whether this property is a label synonym.
+        :param is_filterable: Whether the property is available as a filter.
+        :param apply_to_subclasses: If ``True``, also updates the property on all
+            existing subclasses.
+        :raises ClassNotFoundError: If the class does not exist.
+        :raises PropertyNotFoundError: If the property does not exist.
+        """
         class_def = self.find_class(class_name)
         if class_def is None:
             raise ClassNotFoundError(f"Class '{class_name}' not found")
@@ -393,6 +519,18 @@ class Schema:
                 self.update_property(subclass['name'], prop_name, datatype, description, is_optional, is_array, is_nested, is_lang_string, inverse_of, enums, is_filterable, apply_to_subclasses)
 
     def rename_property(self, class_name: str, old_prop_name: str, new_prop_name: str) -> None:
+        """Rename a property.
+
+        If the property is the class's label property, the label property
+        reference is updated automatically.
+
+        :param class_name: Class containing the property.
+        :param old_prop_name: Current property name.
+        :param new_prop_name: New property name.
+        :raises ClassNotFoundError: If the class does not exist.
+        :raises PropertyNotFoundError: If *old_prop_name* does not exist.
+        :raises PropertyExistsError: If *new_prop_name* is already in use.
+        """
         class_def = self.find_class(class_name)
         if class_def is None:
             raise ClassNotFoundError(f"Class '{class_name}' not found")
@@ -407,6 +545,13 @@ class Schema:
             class_def["labelProperty"] = new_prop_name
 
     def delete_property(self, class_name: str, prop_name: str) -> None:
+        """Remove a property from a class.
+
+        :param class_name: Class containing the property.
+        :param prop_name: Property name to delete.
+        :raises ClassNotFoundError: If the class does not exist.
+        :raises PropertyNotFoundError: If the property does not exist.
+        """
         class_def = self.find_class(class_name)
         if class_def is None:
             raise ClassNotFoundError(f"Class '{class_name}' not found")
@@ -416,15 +561,38 @@ class Schema:
         class_def["properties"].remove(prop_def)
 
     def find_class(self, name: str) -> Optional[dict]:
+        """Find a class definition by name.
+
+        :param name: The class name to look up.
+        :returns: The class dict, or ``None`` if not found.
+        """
         return next((x for x in self._schema["classes"] if x['name'] == name), None)
 
     def find_subclasses(self, baseclass: str) -> list[dict]:
+        """Find all direct subclasses of a given class.
+
+        :param baseclass: The parent class name.
+        :returns: A list of class dicts whose ``subClassOf`` matches *baseclass*.
+        """
         return [x for x in self._schema["classes"] if x.get('subClassOf') == baseclass]
 
     def find_property(self, props: list, name: str) -> Optional[dict]:
+        """Find a property by name within a list of property dicts.
+
+        :param props: List of property dicts to search.
+        :param name: The property name to look up.
+        :returns: The property dict, or ``None`` if not found.
+        """
         return next((x for x in props if x['name'] == name), None)
 
     def assign_property_orders(self, property_orders: dict) -> None:
+        """Reorder properties within classes.
+
+        Properties not listed in the order are appended at the end.
+
+        :param property_orders: A dict mapping class names to ordered lists of
+            property names.
+        """
         for class_def in self._schema['classes']:
             if class_def['name'] in property_orders:
                 ordered_names = property_orders[class_def['name']]
@@ -434,11 +602,23 @@ class Schema:
                 class_def['properties'] = ordered + remaining
 
     def clone(self) -> Self:
+        """Create a deep copy of the schema.
+
+        :returns: A new independent `Schema` instance.
+        """
         return Schema.create_from(json.loads(json.dumps(self._schema)))
 
     def to_dict(self) -> dict:
+        """Convert the schema to a plain dictionary.
+
+        :returns: The schema as a dict.
+        """
         return self._schema
 
     def to_json(self) -> str:
+        """Serialise the schema to a JSON string.
+
+        :returns: A JSON-formatted string.
+        """
         return json.dumps(self._schema, ensure_ascii=False, indent=2)
 

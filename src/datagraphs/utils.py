@@ -15,11 +15,22 @@ URN_PATTERN = re.compile(
 )
 
 def is_valid_urn(urn: str) -> bool:
-    """Return ``True`` if *urn* matches the RFC 2141 URN syntax."""
+    """Check whether *urn* matches the RFC 2141 URN syntax.
+
+    :param urn: The string to test.
+    :returns: ``True`` if *urn* is a valid URN.
+    """
     return URN_PATTERN.match(urn) is not None
 
 def get_type_from_urn(urn: str) -> str:
-    """Extract the type segment from a URN (between the second and last colons)."""
+    """Extract the type segment from a URN.
+
+    Returns the segment between the second and last colons.
+
+    :param urn: A valid URN string.
+    :returns: The type segment.
+    :raises ValueError: If *urn* is not a valid URN.
+    """
     if not is_valid_urn(urn):
         raise ValueError(f'Invalid URN: {urn}') 
     second_colon = urn.index(':', urn.index(':') + 1)
@@ -27,7 +38,14 @@ def get_type_from_urn(urn: str) -> str:
     return urn[second_colon + 1:last_colon]
 
 def get_project_from_urn(urn: str) -> str:
-    """Extract the project name from a URN (between the first and second colons)."""
+    """Extract the project name from a URN.
+
+    Returns the segment between the first and second colons.
+
+    :param urn: A valid URN string.
+    :returns: The project name.
+    :raises ValueError: If *urn* is not a valid URN.
+    """
     if not is_valid_urn(urn):
         raise ValueError(f'Invalid URN: {urn}') 
     first_colon = urn.index(':')
@@ -35,7 +53,14 @@ def get_project_from_urn(urn: str) -> str:
     return urn[first_colon + 1:second_colon]    
 
 def get_id_from_urn(urn: str) -> str:
-    """Extract the trailing identifier from a URN (after the last colon)."""
+    """Extract the trailing identifier from a URN.
+
+    Returns the segment after the last colon.
+
+    :param urn: A valid URN string.
+    :returns: The identifier.
+    :raises ValueError: If *urn* is not a valid URN.
+    """
     if not is_valid_urn(urn):
         raise ValueError(f'Invalid URN: {urn}') 
     return urn[urn.rfind(':') + 1:]
@@ -45,7 +70,13 @@ def map_project_name(
     from_urn: str, 
     to_urn: str
 ) -> Union[Dict, List, str, Any]:
-    """Recursively replace *from_urn* with *to_urn* in all string values of *obj*."""
+    """Recursively replace a URN prefix in all string values of *obj*.
+
+    :param obj: The object to process (dict, list, str, or other).
+    :param from_urn: URN prefix to replace.
+    :param to_urn: Replacement URN prefix.
+    :returns: A copy of *obj* with URN prefixes replaced.
+    """
     if isinstance(obj, dict):
         return {key: map_project_name(value, from_urn, to_urn) for key, value in obj.items()}
     elif isinstance(obj, list):
@@ -73,7 +104,11 @@ class SchemaTransformer:
 
     @staticmethod
     def is_legacy_format(schema: dict) -> bool:
-        """Return ``True`` if *schema* uses the legacy (old) format."""
+        """Detect whether a schema dict uses the legacy format.
+
+        :param schema: A schema dictionary.
+        :returns: ``True`` if *schema* uses the legacy (old) format.
+        """
         classes = schema.get('classes', [])
         if classes:
             first = classes[0]
@@ -82,7 +117,11 @@ class SchemaTransformer:
 
     @classmethod
     def old_to_new(cls, schema: dict) -> dict:
-        """Convert a legacy schema dict to the new format."""
+        """Convert a legacy schema dict to the new format.
+
+        :param schema: A legacy-format schema dictionary.
+        :returns: A new-format schema dictionary.
+        """
         return {
             "name": schema.get("name", ""),
             "createdDate": schema.get("createdDate", ""),
@@ -92,7 +131,11 @@ class SchemaTransformer:
 
     @classmethod
     def new_to_old(cls, schema: dict) -> dict:
-        """Convert a new-format schema dict to the legacy format."""
+        """Convert a new-format schema dict to the legacy format.
+
+        :param schema: A new-format schema dictionary.
+        :returns: A legacy-format schema dictionary.
+        """
         guid = uuid.uuid4().hex
         model_id = f"urn:models:{guid}"
         return {

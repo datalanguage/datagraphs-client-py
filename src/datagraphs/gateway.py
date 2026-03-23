@@ -14,16 +14,15 @@ from datagraphs.enums import VALIDATION_MODE
 logger = logging.getLogger(__name__)
 
 class Gateway:
-    """Gateway for loading and dumping data between the filesystem and a Datagraphs project."""
+    """Higher-level wrapper for deploying projects and bulk import/export of data."""
 
     UNKNOWN_PROJECT_NAME = '__unknown__'
 
     def __init__(self, client: DatagraphsClient, wait_time_ms: int = DatagraphsClient.DEFAULT_WAIT_TIME_MS) -> None:
         """Initialise the Gateway.
 
-        Args:
-            client: A Datagraphs API client.
-            wait_time_ms: Delay in milliseconds between successive API calls.
+        :param client: A DataGraphs API client.
+        :param wait_time_ms: Delay in milliseconds between successive API calls.
         """
         self._client = client
         self._wait_time_ms = wait_time_ms
@@ -32,6 +31,7 @@ class Gateway:
 
     @property
     def client(self) -> DatagraphsClient:
+        """The underlying `Client` instance."""
         return self._client
 
     def _get_schema(self) -> Schema:
@@ -40,7 +40,17 @@ class Gateway:
         return self._schema
 
     def load_project(self, schema: Schema, datasets: list[Dataset], validation_mode: VALIDATION_MODE = VALIDATION_MODE.PROMPT) -> None:
-        """Deploy the project schema and datasets to the API."""
+        """Deploy the project schema and datasets to the API.
+
+        Tears down existing datasets before applying the new schema and
+        datasets.
+
+        :param schema: The schema to deploy.
+        :param datasets: The datasets to deploy.
+        :param validation_mode: How to handle mismatches between deployment and
+            existing datasets. See `VALIDATION_MODE`.
+        :raises ValueError: If duplicate class names are found across datasets.
+        """
         if self._validate_datasets(datasets, self._client.get_datasets(), validation_mode):
             self._client.tear_down()
             self._client.apply_schema(schema)
@@ -90,7 +100,14 @@ class Gateway:
         return dataset_classes, missing_classes
 
     def dump_project(self, schema_path: Union[str, Path], datasets_path: Union[str, Path]) -> None:
-        """Dump the project schema and datasets to the filesystem."""
+        """Export the project schema and dataset configurations to JSON files.
+
+        Files are named ``{project_name}-v{version}-schema.json`` and
+        ``{project_name}-v{version}-datasets.json``.
+
+        :param schema_path: Directory to write the schema JSON file.
+        :param datasets_path: Directory to write the datasets JSON file.
+        """
         name_prefix = f'{self._client.project_name}-v{self._get_schema().version}'
         self._dump_schema(schema_path, name_prefix)
         self._dump_datasets(datasets_path, name_prefix)
@@ -116,21 +133,17 @@ class Gateway:
         from_dir_path: Union[str, Path] = "",
         file_path: Union[str, Path] = "",
     ) -> dict:
-        """Load data from JSON files into the Datagraphs project.
+        """Load data from JSON files into the DataGraphs project.
 
-        Args:
-            class_name: The class name to load, or ``Schema.ALL_CLASSES`` to load every
-                non-base class found across all datasets.
-            from_dir_path: Directory containing ``<ClassName>.json`` files.
-            file_path: Explicit path to a single JSON file (used when loading a
-                specific *class_name*).
+        Base classes (those with subclasses) are automatically skipped when
+        loading all classes.
 
-        Returns:
-            A dict with ``loaded`` and ``skipped`` counts.
-
-        Raises:
-            FileNotFoundError: If *file_path* is supplied but does not exist.
-            ValueError: If the requested *class_name* is not found in any dataset.
+        :param class_name: The class name to load, or ``Schema.ALL_CLASSES`` to
+            load every non-base class found across all datasets.
+        :param from_dir_path: Directory containing ``<ClassName>.json`` files.
+        :param file_path: Explicit path to a single JSON file (used when loading
+            a specific *class_name*).
+        :returns: A dict with ``loaded`` and ``skipped`` counts.
         """
         from_dir_path = Path(from_dir_path) if from_dir_path else Path()
         stats = {"loaded": 0, "skipped": 0}
@@ -232,16 +245,17 @@ class Gateway:
         return project_name
 
     def dump_data(self, to_dir_path: Union[str, Path], class_name: str = Schema.ALL_CLASSES, include_date_fields: bool = False) -> dict:
-        """Dump data from the Datagraphs project to JSON files on disk.
+        """Export entity data from the project to JSON files on disk.
 
-        Args:
-            to_dir_path: Directory to write ``<ClassName>.json`` files into.
-                Created automatically if it does not exist.
-            class_name: The class name to dump, or ``Schema.ALL_CLASSES`` for all.
-            include_date_fields: Whether to include date fields in the dumped data.
+        Each class is written to a separate ``<ClassName>.json`` file. Base
+        classes are automatically skipped.
 
-        Returns:
-            A dict with ``exported`` count.
+        :param to_dir_path: Target directory. Created automatically if it does
+            not exist.
+        :param class_name: The class name to dump, or ``Schema.ALL_CLASSES``
+            for all.
+        :param include_date_fields: Whether to include system date metadata.
+        :returns: A dict with an ``exported`` count.
         """
         to_dir_path = Path(to_dir_path)
         to_dir_path.mkdir(parents=True, exist_ok=True)
@@ -281,7 +295,10 @@ class Gateway:
         return len(data)
 
     def clear_down(self) -> None:
-        """Clear data out of all datasets."""
+        """Clear all data from all datasets in the project.
+
+        The datasets themselves are preserved.
+        """
         datasets = self._client.get_datasets()
         for dataset in datasets:
             self._client.clear_dataset(dataset.slug)
