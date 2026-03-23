@@ -1,6 +1,6 @@
 # DataGraphs Python Client
 
-A Python client library for the [DataGraphs](https://datagraphs.com).
+Python client library for [DataGraphs](https://datagraphs.com).
 
 ## Installation
 
