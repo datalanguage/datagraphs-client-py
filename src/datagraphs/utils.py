@@ -5,7 +5,7 @@ import uuid
 import datetime
 from typing import Dict, List, Any, Union
 
-URN_PATTERN = re.compile(
+_URN_PATTERN = re.compile(
     r"^[Uu][Rr][Nn]:"                          # "urn:" prefix (case-insensitive)
     r"(?![Uu][Rr][Nn]-)"                       # NID cannot start with "urn-"
     r"[a-zA-Z0-9][a-zA-Z0-9-]{1,31}:"          # NID: 2-32 chars
@@ -20,7 +20,7 @@ def is_valid_urn(urn: str) -> bool:
     :param urn: The string to test.
     :returns: ``True`` if *urn* is a valid URN.
     """
-    return URN_PATTERN.match(urn) is not None
+    return _URN_PATTERN.match(urn) is not None
 
 def get_type_from_urn(urn: str) -> str:
     """Extract the type segment from a URN.

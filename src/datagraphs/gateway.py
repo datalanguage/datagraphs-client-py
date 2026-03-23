@@ -11,7 +11,7 @@ from datagraphs.dataset import Dataset
 from datagraphs.utils import get_project_from_urn, map_project_name
 from datagraphs.enums import VALIDATION_MODE
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
 class Gateway:
     """Higher-level wrapper for deploying projects and bulk import/export of data."""
@@ -59,7 +59,7 @@ class Gateway:
     def _validate_datasets(self, deployment_datasets: list[Dataset], existing_datasets: list[Dataset], validation_mode: VALIDATION_MODE) -> None:
         """Validate that the local and API datasets match in terms of class names."""
         if validation_mode == VALIDATION_MODE.BYPASS:
-            logger.warning('Validation mode set to BYPASS - skipping all dataset validations')
+            _logger.warning('Validation mode set to BYPASS - skipping all dataset validations')
             return True 
         deployment_classes = self._ensure_no_duplicate_classes(deployment_datasets)
         existing_results = self._verify_datasets_against_classlist(existing_datasets, deployment_classes)
@@ -68,7 +68,7 @@ class Gateway:
             warning_lines = [f'The class {m["class_name"]} was found in existing dataset {m["dataset_slug"]} but not in any deployment dataset.' for m in existing_results[1]]
             warning_lines += [f'The class {m["class_name"]} was found in deployment dataset {m["dataset_slug"]} but not in any existing dataset.' for m in deployment_results[1]]
             warning_message = 'Dataset validation found mismatches between deployment and existing datasets:\n' + '\n'.join(warning_lines)
-            logger.warning(warning_message)
+            _logger.warning(warning_message)
             if validation_mode == VALIDATION_MODE.PROMPT:
                 response = input(f'{warning_message}\nDo you wish to continue? (y/n): ').strip().lower()
                 return response == 'y'
@@ -156,7 +156,7 @@ class Gateway:
             if dataset is not None:
                 stats = self._load_data_for_class(stats, class_name, dataset.slug, from_dir_path, file_path)
             else:
-                logger.error('The class %s was not found in any dataset - cannot load data.', class_name)
+                _logger.error('The class %s was not found in any dataset - cannot load data.', class_name)
                 stats["skipped"] += 1
         return stats
 
@@ -166,7 +166,7 @@ class Gateway:
             if len(self._get_schema().find_subclasses(dataset_class)) == 0:
                 stats = self._load_data_for_class(stats, dataset_class, dataset.slug, from_dir_path)
             else:
-                logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
+                _logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
         return stats
 
     def _load_data_for_class(self, stats: dict, class_name: str, dataset_slug: str, from_dir_path: Union[str, Path] = "", file_path: Union[str, Path] = "") -> dict:
@@ -176,7 +176,7 @@ class Gateway:
             stats["loaded"] += result["loaded"]
             stats["skipped"] += result["skipped"]
         except Exception as e:
-            logger.error('Error loading data for %s: %s', class_name, str(e))
+            _logger.error('Error loading data for %s: %s', class_name, str(e))
             stats["skipped"] += 1
         return stats
 
@@ -197,19 +197,19 @@ class Gateway:
         """
         json_file_path = Path(from_dir_path).joinpath(f'{class_name}.json') if not file_path else Path(file_path)
         if json_file_path.is_file():
-            logger.info('Reading data from %s...', json_file_path)
+            _logger.info('Reading data from %s...', json_file_path)
             with open(json_file_path, 'r', encoding='utf-8') as dataFile:
                 data = json.load(dataFile)
                 if len(data) > 0:
                     data = self._map_data_project_urns(data)
-                    logger.info('Writing data for %s...', class_name)
+                    _logger.info('Writing data for %s...', class_name)
                     self._client.put(dataset_slug, data)
                     return {"loaded": len(data), "skipped": 0}
                 else:
-                    logger.warning('No entities found in file %s...', json_file_path)
+                    _logger.warning('No entities found in file %s...', json_file_path)
                     return {"loaded": 0, "skipped": 1}
         else:
-            logger.error('No file found at %s...', json_file_path)
+            _logger.error('No file found at %s...', json_file_path)
             return {"loaded": 0, "skipped": 1}
 
     def _map_data_project_urns(self, data: list[dict]) -> list[dict]:
@@ -271,13 +271,13 @@ class Gateway:
                         stats["exported"] += result
                         time.sleep(self._wait_time_ms / 1000)
                     except Exception as e:
-                        logger.error('Error exporting data for %s: %s', dataset_class, str(e))                     
+                        _logger.error('Error exporting data for %s: %s', dataset_class, str(e))                     
         else:
             try:
                 result = self._persist_to_file(class_name, to_dir_path, include_date_fields)
                 stats["exported"] += result
             except Exception as e:
-                logger.error('Error exporting data for %s: %s', class_name, str(e))
+                _logger.error('Error exporting data for %s: %s', class_name, str(e))
         return stats
 
     def _persist_to_file(self, class_name: str, to_dir_path: Union[str, Path], include_date_fields: bool) -> int:
@@ -287,7 +287,7 @@ class Gateway:
             class_name: The class name to fetch.
             to_dir_path: Target directory (must already exist).
         """
-        logger.info('Fetching data for %s...', class_name)
+        _logger.info('Fetching data for %s...', class_name)
         data = self._client.get(class_name=class_name, include_date_fields=include_date_fields)
         file_path = Path(to_dir_path).joinpath(f'{class_name}.json')
         with open(file_path, 'w', encoding='utf-8') as dataFile:

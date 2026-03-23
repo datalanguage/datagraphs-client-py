@@ -11,7 +11,7 @@ from typing import Optional, Dict, List, Any, Union
 from datagraphs.schema import Schema as DatagraphsSchema
 from datagraphs.dataset import Dataset
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
 class HTTP(Enum):
     GET = 'get'
@@ -143,7 +143,7 @@ class Client:
                     return response.json()
                 return None
             elif response.status_code == self.HTTP_GATEWAY_TIMEOUT:
-                logger.warning("%s - %s: continuing processing, but try a smaller batch size...", response.reason, response.text)
+                _logger.warning("%s - %s: continuing processing, but try a smaller batch size...", response.reason, response.text)
                 return {}
             elif response.status_code in [self.HTTP_UNAUTHORIZED, self.HTTP_FORBIDDEN]:
                 if _retry_count < self.MAX_AUTH_RETRIES:
@@ -365,12 +365,12 @@ class Client:
         """
         entities = [data] if isinstance(data, dict) else data
         length = len(entities)
-        logger.info('Loading %d entities into dataset %s in repo: %s', length, dataset, self.project_name)
+        _logger.info('Loading %d entities into dataset %s in repo: %s', length, dataset, self.project_name)
         if length > self._batch_size:
             for i in range(0, length, self._batch_size):
                 batch = entities[i:i + self._batch_size]
                 end = min(i + self._batch_size, length)
-                logger.info('   Loading batch %d-%d of %d entities into dataset %s in repo: %s', i, end, length, dataset, self.project_name)
+                _logger.info('   Loading batch %d-%d of %d entities into dataset %s in repo: %s', i, end, length, dataset, self.project_name)
                 self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=batch, headers=self._get_headers())
         else:
             self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=entities, headers=self._get_headers())
@@ -391,7 +391,7 @@ class Client:
 
         :param schema: The schema to apply.
         """
-        logger.info('Applying schema to project: %s', self.project_name)
+        _logger.info('Applying schema to project: %s', self.project_name)
         url = f'{self._base_url}models/_active'
         self._request(HTTP.PUT, url, data=schema.to_json(), headers=self._get_headers())
 
@@ -413,7 +413,7 @@ class Client:
         resp = self._request(HTTP.GET, url, headers=self._get_headers())
         data = resp.get("results", []) if resp else []
         if len(data) >= self.DEFAULT_DATASETS_PAGE_SIZE:
-            logger.warning('Dataset results (%d) may have been truncated at page size limit (%d)', len(data), self.DEFAULT_DATASETS_PAGE_SIZE)
+            _logger.warning('Dataset results (%d) may have been truncated at page size limit (%d)', len(data), self.DEFAULT_DATASETS_PAGE_SIZE)
         return [Dataset.create_from(item) for item in data]
 
     def apply_datasets(self, datasets: List[Dataset], timeout_ms: int=DATASETS_TIMEOUT_MS) -> None:
@@ -427,7 +427,7 @@ class Client:
             confirm all datasets are applied.
         :raises DatagraphsError: If datasets are not applied within the timeout.
         """
-        logger.info('Applying datasets update to project: %s', self.project_name)
+        _logger.info('Applying datasets update to project: %s', self.project_name)
         target_datasets = self.get_datasets()
         for dataset in datasets:
             match = next((d for d in target_datasets if d.slug == dataset.slug), None)
@@ -439,16 +439,16 @@ class Client:
 
     def _assert_datasets_applied(self, datasets: List[Dataset], timeout_ms: int) -> None:
         count = 1
-        logger.info('Verifying all datasets have been applied successfully...')
+        _logger.info('Verifying all datasets have been applied successfully...')
         while len(self.get_datasets()) != len(datasets):
             if (count * self.wait_time_ms) < timeout_ms:
-                logger.info('Waiting for datasets to be applied...')
+                _logger.info('Waiting for datasets to be applied...')
                 count += 1
                 time.sleep(self.wait_time_ms / 1000)
             else:
-                logger.error('Failed to apply datasets within timeout.')
+                _logger.error('Failed to apply datasets within timeout.')
                 raise DatagraphsError('Failed to apply datasets within timeout.')
-        logger.info('All datasets have been applied successfully.')
+        _logger.info('All datasets have been applied successfully.')
                 
     def create_dataset(self, dataset: Dataset) -> None:
         """Create a new dataset.
@@ -472,7 +472,7 @@ class Client:
 
         :param dataset_slug: The slug of the dataset to clear.
         """
-        logger.info('Clearing down data from dataset: %s', dataset_slug)
+        _logger.info('Clearing down data from dataset: %s', dataset_slug)
         url = f'{self._base_url}{dataset_slug}?filter=_all'
 
         print(url)
@@ -484,7 +484,7 @@ class Client:
 
         :param dataset_slug: The slug of the dataset to drop.
         """
-        logger.info('Dropping dataset: %s', dataset_slug)
+        _logger.info('Dropping dataset: %s', dataset_slug)
         url = f'{self._base_url}datasets/{dataset_slug}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
