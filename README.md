@@ -34,7 +34,7 @@ results = client.query(q="Acme", page_size=50)
 ```
 
 ```python
-from datagraphs import Client, Gateway, Schema
+from datagraphs import Client
 
 # Connect to a project
 client = Client(
@@ -46,7 +46,7 @@ client = Client(
 
 # Read the project schema and dataset configurations
 schema = client.get_schema()
-schema = client.get_datasets()
+datasets = client.get_datasets()
 
 # Update the project schema and dataset configurations
 client.apply_schema(schema)
@@ -54,7 +54,8 @@ client.apply_datasets(datasets)
 ```
 
 ```python
-from datagraphs import Client, Gateway, Dataset
+import json
+from datagraphs import Client, Gateway, Schema, Dataset
 
 # Connect to a project
 client = Client(
@@ -63,7 +64,7 @@ client = Client(
     client_id="your-client-id",
     client_secret="your-client-secret"
 )
-gateway = Gateway(client, schema)
+gateway = Gateway(client)
 
 # Load / dump data via the Gateway
 gateway.dump_data("./backup")
@@ -74,10 +75,12 @@ schema_output_path = "./schemas/"
 datasets_output_path = "./datasets/"
 gateway.dump_project(schema_output_path, datasets_output_path)
 
-schema_data = load_json("./schemas/myproject-model-v1.0.json")
-datasets_data = load_json("./datasets/myproject-datasets-v1.0.json")
+with open("./schemas/myproject-model-v1.0.json") as f:
+    schema_data = json.load(f)
+with open("./datasets/myproject-datasets-v1.0.json") as f:
+    datasets_data = json.load(f)
 schema = Schema.create_from(schema_data)
-datasets = [Dataset.create_from(dataset) for dataset in datasets]
+datasets = [Dataset.create_from(d) for d in datasets_data]
 gateway.load_project(schema, datasets)
 
 ```
