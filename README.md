@@ -40,6 +40,8 @@ from datagraphs import Client, Gateway, Schema
 client = Client(
     project_name="my-project",
     api_key="your-api-key",
+    client_id="your-client-id",
+    client_secret="your-client-secret"
 )
 
 # Read the project schema and dataset configurations
@@ -58,6 +60,8 @@ from datagraphs import Client, Gateway, Dataset
 client = Client(
     project_name="my-project",
     api_key="your-api-key",
+    client_id="your-client-id",
+    client_secret="your-client-secret"
 )
 gateway = Gateway(client, schema)
 
