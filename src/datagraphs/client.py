@@ -6,21 +6,13 @@ import requests
 import json
 import urllib.parse
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Optional, Dict, List, Any, Union
 from datagraphs.schema import Schema as DatagraphsSchema
 from datagraphs.dataset import Dataset
+from datagraphs.enums import HTTP
 
 _logger = logging.getLogger(__name__)
 
-class HTTP(Enum):
-    GET = 'get'
-    PUT = 'put'
-    POST = 'post'
-    DELETE = 'delete'
-    
-    def __str__(self) -> str:
-        return str(self.value)
 
 class DatagraphsError(Exception):
     """Base exception for DataGraphs client errors."""

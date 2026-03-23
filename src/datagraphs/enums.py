@@ -1,5 +1,12 @@
 from enum import StrEnum
 
+class HTTP(StrEnum):
+    """Enumeration of HTTP methods available in the DataGraphs API."""
+    GET = 'get'
+    PUT = 'put'
+    POST = 'post'
+    DELETE = 'delete'
+
 class DATATYPE(StrEnum):
     """Enumeration of property datatypes available in a DataGraphs schema."""
     TEXT = 'text'
