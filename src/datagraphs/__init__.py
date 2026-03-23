@@ -7,6 +7,7 @@ from datagraphs.schema import Schema
 from datagraphs.dataset import Dataset
 
 __version__ = version("pydatagraphs")
+"""The installed version of the pydatagraphs package, read from package metadata."""
 
 __all__ = [
     "Client",
