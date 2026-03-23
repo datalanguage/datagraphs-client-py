@@ -77,7 +77,7 @@ datasets = [Dataset.create_from(dataset) for dataset in datasets]
 gateway.load_project(schema, datasets)
 
 ```
-For full API documentation, please see [here](./API.md)
+For full API documentation, please [see here](https://datalanguage.github.io/datagraphs-client-py)
 
 ## Authentication
 
