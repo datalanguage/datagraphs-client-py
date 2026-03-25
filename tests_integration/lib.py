@@ -15,19 +15,33 @@ def get_gateway(config_key: str) -> DatagraphsGateway:
     return gateway
 
 def get_client(config_key: str) -> DatagraphsClient:
-    with open(config_file_location, 'r') as config_file:
-        configs = yaml.safe_load(config_file)
-        if config_key in configs:
-            config = configs[config_key]
-            dg_client = DatagraphsClient(
-                project_name=config['project_name'], 
-                api_key=config['api_key'], 
-                client_id=config['client_id'], 
-                client_secret=config['client_secret']
-            )
-            return dg_client
-        else:
-            print("Unrecognised config key - please select from: "+", ".join(config.keys()))
+    # Try local config file first (for local development)
+    if os.path.exists(config_file_location):
+        with open(config_file_location, 'r') as config_file:
+            configs = yaml.safe_load(config_file)
+            if config_key in configs:
+                config = configs[config_key]
+                return DatagraphsClient(
+                    project_name=config['project_name'],
+                    api_key=config['api_key'],
+                    client_id=config['client_id'],
+                    client_secret=config['client_secret']
+                )
+
+    # Fall back to environment variables (for CI)
+    api_key = os.environ.get('API_KEY')
+    if api_key:
+        return DatagraphsClient(
+            project_name=os.environ['PROJECT_NAME'],
+            api_key=api_key,
+            client_id=os.environ['CLIENT_ID'],
+            client_secret=os.environ['CLIENT_SECRET']
+        )
+
+    raise RuntimeError(
+        f"No credentials found: config key '{config_key}' not in "
+        f"{config_file_location} and DG_* env vars not set"
+    )
 
 def get_empty_schema() -> DatagraphsSchema:
     schema = DatagraphsSchema()

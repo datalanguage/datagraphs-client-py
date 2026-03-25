@@ -69,5 +69,6 @@ echo "Installing project with dev dependencies ..."
 uv sync
 
 echo ""
-echo "Done! Activate with:"
-echo "  source $VENV_DIR/bin/activate"
+echo "Done! Run commands with:"
+echo "  uv run <command>"
+echo "  e.g. uv run pytest"
