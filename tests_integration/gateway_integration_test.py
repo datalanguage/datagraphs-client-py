@@ -33,7 +33,7 @@ class TestGatewayProjectOperations:
 
     @pytest.fixture(scope="class",autouse=True)
     def setup(self, request):
-        WORKING_DIR.mkdir(exist_ok=True)
+        WORKING_DIR.mkdir(parents=True, exist_ok=True)
         request.cls.gateway = get_gateway('integration-testing')
         yield
         for file in WORKING_DIR.iterdir():
