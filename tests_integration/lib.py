@@ -40,7 +40,7 @@ def get_client(config_key: str) -> DatagraphsClient:
 
     raise RuntimeError(
         f"No credentials found: config key '{config_key}' not in "
-        f"{config_file_location} and DG_* env vars not set"
+        f"{config_file_location} and OAuth env vars not set"
     )
 
 def get_empty_schema() -> DatagraphsSchema:

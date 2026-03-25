@@ -36,10 +36,10 @@ jobs:
 
       - name: Run integration tests
         env:
-          DG_API_KEY: ${{ secrets.API_KEY }}
-          DG_CLIENT_ID: ${{ secrets.CLIENT_ID }}
-          DG_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
-          DG_PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+          API_KEY: ${{ secrets.API_KEY }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
         run: uv run pytest tests_integration -v
 
   release:
