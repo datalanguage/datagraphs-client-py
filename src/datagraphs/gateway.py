@@ -244,7 +244,7 @@ class Gateway:
                 raise ValueError(f'Expected id property to be string - found type {type(entity['id'])}')
         return project_name
 
-    def dump_data(self, to_dir_path: Union[str, Path], class_name: str = Schema.ALL_CLASSES, include_date_fields: bool = False) -> dict:
+    def dump_data(self, to_dir_path: Union[str, Path], class_name: str = Schema.ALL_CLASSES, excluded_class_names: str = "", include_date_fields: bool = False) -> dict:
         """Export entity data from the project to JSON files on disk.
 
         Each class is written to a separate ``<ClassName>.json`` file. Base
@@ -254,6 +254,7 @@ class Gateway:
             not exist.
         :param class_name: The class name to dump, or ``Schema.ALL_CLASSES``
             for all.
+        :param excluded_class_names: Comma-separated list of classes to exclude from the export if class_name is ``Schema.ALL_CLASSES``.
         :param include_date_fields: Whether to include system date metadata.
         :returns: A dict with an ``exported`` count.
         """
@@ -264,7 +265,10 @@ class Gateway:
         if class_name == Schema.ALL_CLASSES:
             datasets = self._client.get_datasets()
             dataset_classes = [cls for d in datasets for cls in d.classes]
+            excluded_classes = [cls.strip() for cls in excluded_class_names.split(',')] if excluded_class_names else []
             for dataset_class in dataset_classes:
+                if dataset_class in excluded_classes:
+                    continue
                 if len(self._get_schema().find_subclasses(dataset_class)) == 0:   
                     try:
                         result = self._persist_to_file(dataset_class, to_dir_path, include_date_fields)

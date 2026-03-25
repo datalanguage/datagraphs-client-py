@@ -94,6 +94,14 @@ class TestDumpData:
         gateway.dump_data(to_dir_path=str(WORKING_DIR))
         mock_client.get.assert_called_once()
 
+    def test_should_exclude_specified_classes_when_dumping_all(self, gateway, mock_client, mock_schema):
+        dataset = Dataset(name='Test Dataset', project='test-project', classes=['TypeA', 'TypeB', 'TypeC'])
+        mock_client.get_datasets.return_value = [dataset]
+        mock_schema.find_subclasses.return_value = []
+        mock_client.get.return_value = []
+        gateway.dump_data(to_dir_path=str(WORKING_DIR), excluded_class_names='TypeB, TypeC')
+        mock_client.get.assert_called_once_with(class_name='TypeA', include_date_fields=False)
+
     def test_should_dump_multiple_datasets(self, gateway, mock_client, mock_schema):
         ds1 = Dataset(name='DS1', project='test-project', classes=['TypeA'])
         ds2 = Dataset(name='DS2', project='test-project', classes=['TypeB'])

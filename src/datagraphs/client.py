@@ -13,7 +13,6 @@ from datagraphs.enums import HTTP
 
 _logger = logging.getLogger(__name__)
 
-
 class DatagraphsError(Exception):
     """Base exception for DataGraphs client errors."""
     pass
@@ -28,23 +27,23 @@ class Client:
     Handles authentication, pagination, and batched writes.
     """
 
-    PROD_URL = "https://api.datagraphs.io/"
-    AUTH_URL_SUFFIX = "oauth/token"
+    _PROD_URL = "https://api.datagraphs.io/"
+    _AUTH_URL_SUFFIX = "oauth/token"
 
     DEFAULT_BATCH_SIZE = 100
     DEFAULT_WAIT_TIME_MS = 200
-    DEFAULT_FACET_SIZE = 10
-    MAX_AUTH_RETRIES = 2
-    DATASETS_TIMEOUT_MS = 30000
+    _DEFAULT_FACET_SIZE = 10
+    _MAX_AUTH_RETRIES = 2
+    _DATASETS_TIMEOUT_MS = 30000
     
     # HTTP status codes
-    HTTP_OK = 200
-    HTTP_CREATED = 201
-    HTTP_NO_CONTENT = 204
-    HTTP_UNAUTHORIZED = 401
-    HTTP_FORBIDDEN = 403
-    HTTP_GATEWAY_TIMEOUT = 504
-    DEFAULT_DATASETS_PAGE_SIZE = 1000
+    _HTTP_OK = 200
+    _HTTP_CREATED = 201
+    _HTTP_NO_CONTENT = 204
+    _HTTP_UNAUTHORIZED = 401
+    _HTTP_FORBIDDEN = 403
+    _HTTP_GATEWAY_TIMEOUT = 504
+    _DEFAULT_DATASETS_PAGE_SIZE = 1000
 
     def __init__(
         self, 
@@ -53,7 +52,7 @@ class Client:
         client_id: str = "", 
         client_secret: str = "", 
         batch_size: int = DEFAULT_BATCH_SIZE, 
-        service_url: str = PROD_URL
+        service_url: str = _PROD_URL
     ) -> None:
         """Initialise the DataGraphs client.
 
@@ -103,7 +102,7 @@ class Client:
             }
             try:
                 response = self._http_client.post(
-                    f'{self._service_url}{self.AUTH_URL_SUFFIX}', 
+                    f'{self._service_url}{self._AUTH_URL_SUFFIX}',
                     headers=headers, 
                     data=json.dumps(body)
                 )
@@ -130,20 +129,20 @@ class Client:
             if 'headers' in kwargs and method in [HTTP.PUT, HTTP.POST]:
                 kwargs['headers']['Content-Type'] = 'application/json'            
             response = self._http_client.request(str(method), url, **kwargs)
-            if response.status_code in [self.HTTP_OK, self.HTTP_CREATED, self.HTTP_NO_CONTENT]:
+            if response.status_code in [self._HTTP_OK, self._HTTP_CREATED, self._HTTP_NO_CONTENT]:
                 if method == HTTP.GET:
                     return response.json()
                 return None
-            elif response.status_code == self.HTTP_GATEWAY_TIMEOUT:
+            elif response.status_code == self._HTTP_GATEWAY_TIMEOUT:
                 _logger.warning("%s - %s: continuing processing, but try a smaller batch size...", response.reason, response.text)
                 return {}
-            elif response.status_code in [self.HTTP_UNAUTHORIZED, self.HTTP_FORBIDDEN]:
-                if _retry_count < self.MAX_AUTH_RETRIES:
+            elif response.status_code in [self._HTTP_UNAUTHORIZED, self._HTTP_FORBIDDEN]:
+                if _retry_count < self._MAX_AUTH_RETRIES:
                     if 'headers' in kwargs and 'Authorization' in kwargs['headers']:
                         kwargs['headers']['Authorization'] = self._get_auth_token(force_refresh=True)
                     return self._request(method, url, _retry_count=_retry_count + 1, **kwargs)
                 else:
-                    raise AuthenticationError(f'Authentication failed after {self.MAX_AUTH_RETRIES+1} attempts')
+                    raise AuthenticationError(f'Authentication failed after {self._MAX_AUTH_RETRIES+1} attempts')
             else:
                 raise DatagraphsError(f"Request failed with status {response.status_code}: {response.text}")
         except requests.exceptions.RequestException as e:
@@ -260,7 +259,7 @@ class Client:
         if filters:
             params.append(('filter', filters))
         if facets:
-            effective_facet_size = facet_size if facet_size > -1 else self.DEFAULT_FACET_SIZE
+            effective_facet_size = facet_size if facet_size > -1 else self._DEFAULT_FACET_SIZE
             params.append(('facets', facets))
             params.append(('facetSize', effective_facet_size))
         if date_facets:
@@ -401,14 +400,14 @@ class Client:
 
         :returns: A list of `Dataset` objects.
         """
-        url = f'{self._base_url}?pageSize={self.DEFAULT_DATASETS_PAGE_SIZE}&t={self._cache_buster()}'
+        url = f'{self._base_url}?pageSize={self._DEFAULT_DATASETS_PAGE_SIZE}&t={self._cache_buster()}'
         resp = self._request(HTTP.GET, url, headers=self._get_headers())
         data = resp.get("results", []) if resp else []
-        if len(data) >= self.DEFAULT_DATASETS_PAGE_SIZE:
-            _logger.warning('Dataset results (%d) may have been truncated at page size limit (%d)', len(data), self.DEFAULT_DATASETS_PAGE_SIZE)
+        if len(data) >= self._DEFAULT_DATASETS_PAGE_SIZE:
+            _logger.warning('Dataset results (%d) may have been truncated at page size limit (%d)', len(data), self._DEFAULT_DATASETS_PAGE_SIZE)
         return [Dataset.create_from(item) for item in data]
 
-    def apply_datasets(self, datasets: List[Dataset], timeout_ms: int=DATASETS_TIMEOUT_MS) -> None:
+    def apply_datasets(self, datasets: List[Dataset], timeout_ms: int=_DATASETS_TIMEOUT_MS) -> None:
         """Create or update datasets so they match the supplied list.
 
         New datasets are created; existing datasets with changes are updated.
@@ -466,9 +465,6 @@ class Client:
         """
         _logger.info('Clearing down data from dataset: %s', dataset_slug)
         url = f'{self._base_url}{dataset_slug}?filter=_all'
-
-        print(url)
-
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
     def drop_dataset(self, dataset_slug: str) -> None:
