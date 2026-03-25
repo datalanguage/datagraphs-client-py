@@ -352,6 +352,11 @@ class TestLoadProject:
         assert mock_client.apply_schema.call_count == 1
         assert mock_client.apply_datasets.call_count == 1    
 
+    def test_should_retry_applying_project_on_exception(self, gateway, mock_client, mock_schema):
+        mock_client.apply_schema.side_effect = [Exception('Schema apply failed'), None]
+        datasets = [Dataset(name='Test', project='test', classes=['ClassC'])]
+        gateway.load_project(mock_schema, datasets, validation_mode=VALIDATION_MODE.BYPASS)
+        assert mock_client.apply_schema.call_count == 2
 
 class TestDumpProject:
 

@@ -52,9 +52,18 @@ class Gateway:
         :raises ValueError: If duplicate class names are found across datasets.
         """
         if self._validate_datasets(datasets, self._client.get_datasets(), validation_mode):
-            self._client.tear_down()
-            self._client.apply_schema(schema)
-            self._client.apply_datasets(datasets)
+            try:
+                self._teardown_and_load_project(schema, datasets, hard_teardown=False)
+            except Exception as e:
+                _logger.error('Error loading project: %s', str(e))
+                _logger.info('Applying hard teardown and attempting to redeploy...')
+                self._teardown_and_load_project(schema, datasets, hard_teardown=True)
+
+    def _teardown_and_load_project(self, schema: Schema, datasets: list[Dataset], hard_teardown: bool = False) -> None:
+        """Tear down existing datasets and deploy the provided schema and datasets."""
+        self._client.tear_down(drop_datasets=hard_teardown)
+        self._client.apply_schema(schema)
+        self._client.apply_datasets(datasets)
 
     def _validate_datasets(self, deployment_datasets: list[Dataset], existing_datasets: list[Dataset], validation_mode: VALIDATION_MODE) -> None:
         """Validate that the local and API datasets match in terms of class names."""

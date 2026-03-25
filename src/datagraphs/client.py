@@ -426,6 +426,7 @@ class Client:
                 self.create_dataset(dataset)
             elif match != dataset:
                 self.update_dataset(dataset)
+            time.sleep(self._wait_time_ms / 1000)
         self._assert_datasets_applied(datasets, timeout_ms)
 
     def _assert_datasets_applied(self, datasets: List[Dataset], timeout_ms: int) -> None:
@@ -487,4 +488,5 @@ class Client:
             if drop_datasets:
                 self.drop_dataset(dataset.slug)
             else:
-                self.clear_dataset(dataset.slug)    
+                self.clear_dataset(dataset.slug)
+            time.sleep(self._wait_time_ms / 1000)
