@@ -362,7 +362,10 @@ class Client:
                 batch = entities[i:i + self._batch_size]
                 end = min(i + self._batch_size, length)
                 _logger.info('   Loading batch %d-%d of %d entities into dataset %s in repo: %s', i, end, length, dataset, self.project_name)
-                self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=batch, headers=self._get_headers())
+                try:
+                    self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=batch, headers=self._get_headers())
+                except Exception as e:
+                    _logger.error('Error loading batch %d-%d of %d entities into dataset %s: %s', i, end, length, dataset, str(e))
         else:
             self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=entities, headers=self._get_headers())
         return length
