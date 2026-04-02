@@ -66,6 +66,9 @@ class Gateway:
         self._client.apply_datasets(datasets)
 
     def _validate_datasets(self, deployment_datasets: list[Dataset], existing_datasets: list[Dataset], validation_mode: VALIDATION_MODE) -> None:
+        if self._is_empty_project(existing_datasets):
+            _logger.info('The target project is empty - skipping dataset validation')
+            return True
         """Validate that the local and API datasets match in terms of class names."""
         if validation_mode == VALIDATION_MODE.BYPASS:
             _logger.warning('Validation mode set to BYPASS - skipping all dataset validations')
@@ -84,6 +87,9 @@ class Gateway:
             else:
                 return True
         return True
+
+    def _is_empty_project(self, datasets: list[Dataset]) -> bool:
+        return len([cls for d in datasets for cls in d.classes]) == 0
 
     def _ensure_no_duplicate_classes(self, datasets: list[Dataset]) -> None:
         """Validate that no duplicate class names are found across the provided datasets."""
