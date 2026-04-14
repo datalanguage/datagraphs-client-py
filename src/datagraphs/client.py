@@ -285,6 +285,7 @@ class Client:
         return f'{self._base_url}{dataset}?{self._build_query(params)}'
 
     def query(self, 
+            gql: str = '',
             dataset: str = '_all', 
             q: str = '', 
             filters: str = '', 
@@ -303,7 +304,8 @@ class Client:
             include_date_fields: bool = False
         ) -> Union[List[Dict[str, Any]], tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
         """Query the API with filters, facets, sorting, and pagination.
-
+        
+        :param gql: a GQL query string - if this is specified then all other arguments are ignored.
         :param dataset: Dataset slug to query (default ``'_all'``).
         :param q: Free-text search query string.
         :param filters: Filter expression (e.g. ``'type:Person'``).
@@ -323,15 +325,36 @@ class Client:
         :returns: A list of result dicts, or a ``(results, facets)`` tuple when
             facets are requested.
         """
+        if gql:
+            return self._query_gql(gql, lang)
+        else:
+            return self._query(dataset, q, filters, facets, facet_size, date_facets, fields, embed, sort, ids, lang, page_no, page_size, previous_page_token, next_page_token, include_date_fields)
+
+    def _query(self, 
+            dataset: str = '_all', 
+            q: str = '', 
+            filters: str = '', 
+            facets: str = '', 
+            facet_size: int = -1, 
+            date_facets: str = '', 
+            fields: str = '', 
+            embed: str = '', 
+            sort: str = '', 
+            ids: str = '', 
+            lang: str = 'all', 
+            page_no: int = -1,
+            page_size: int = -1,
+            previous_page_token: str = '',
+            next_page_token: str = '',
+            include_date_fields: bool = False
+        ) -> Union[List[Dict[str, Any]], tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
         if page_size == -1:
             page_size = self._batch_size
-            
         url = self._get_query_url(
-            dataset, q, filters, facets, facet_size, date_facets, fields, embed, sort, ids, 
+            dataset, q, filters, facets, facet_size, date_facets, fields, embed, sort, ids,
             lang, page_no, page_size, previous_page_token, next_page_token, include_date_fields
         )
         resp = self._request(HTTP.GET, url, headers=self._get_headers(lang))
-
         if resp and 'search' in resp:
             total_results = resp['search']['totalResults']
             results = resp['results'] if total_results > 0 else []
@@ -341,6 +364,16 @@ class Client:
                 return results
         elif len(ids) > 0 and isinstance(resp, list):
             return resp
+        else:
+            return []
+
+    def _query_gql(self, gql:str, lang: str) -> List[Dict[str, Any]]:
+        url = f'{self._base_url}_cypher'
+        headers = self._get_headers(lang)
+        headers['Content-Type'] = 'application/json'
+        resp = self._request(HTTP.POST, url, json={'query': gql}, headers=headers)
+        if resp and 'data' in resp: 
+            return resp['data']
         else:
             return []
 

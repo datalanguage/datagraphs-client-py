@@ -243,6 +243,15 @@ class TestQuery:
     def setup(self, get_client):
         self.client = get_client()
 
+    def test_should_support_gql_query(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200)
+        gql_query = 'MATCH (n) RETURN n'
+        self.client.query(gql=gql_query)
+        args, kwargs = self.client._http_client.request.call_args
+        assert args[0] == "post"
+        assert args[1].startswith('https://api.datagraphs.io/test_project/_cypher')
+        assert kwargs['json']['query'] == gql_query
+
     def test_should_support_query_by_dataset(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response(['a', 'b']))
         self.client.query(dataset='test-dataset')
