@@ -63,6 +63,10 @@ class Client:
         :param batch_size: Number of items to process in each batch.
         :param service_url: Base URL for the API service.
         """
+        if project_name is None or len(project_name) == 0:
+            raise ValueError("project_name is required")
+        if api_key is None or len(api_key) == 0:
+            raise ValueError("api_key is required")
         self.project_name = project_name
         self._api_key = api_key
         self._client_id = client_id
