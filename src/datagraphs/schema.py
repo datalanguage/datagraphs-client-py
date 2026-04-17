@@ -47,7 +47,7 @@ class Schema:
             "lastModifiedDate": now,
             "classes": [],
         }
-        self._update_schema_metadata(name, version)
+        self.update_schema_metadata(name, version)
 
     @staticmethod
     def create_from(data: dict, version: str = "") -> Self:
@@ -66,6 +66,17 @@ class Schema:
         schema._set_internal_schema(data, version)
         return schema
 
+    def update_schema_metadata(self, name: str = "", version: str = "") -> None:
+        """Update the schema's name, version, and last modified date.
+        
+        :param name: New name for the schema. If empty, the name is unchanged unless it was previously empty, in which case it defaults to 'Domain Model'.
+        :param version: New version string. If empty, the version is unchanged unless it was previously empty, in which case it defaults to '1.0'.
+        """
+        self._version = version or '1.0'
+        self._schema['lastModifiedDate'] = datetime.datetime.now(datetime.UTC).isoformat()
+        if name or version or len(self._schema.get('name', '')) == 0:
+            self._schema['name'] = f"{name or 'Domain Model'} v{self.version}"
+
     @staticmethod
     def _is_legacy_format(schema: dict) -> bool:
         """Detect whether a schema dict uses the legacy (old) format."""
@@ -75,15 +86,9 @@ class Schema:
             return 'objectProperties' in first or ('label' in first and 'type' not in first)
         return 'guid' in schema
 
-    def _update_schema_metadata(self, name: str = "", version: str = "") -> None:
-        self._version = version or '1.0'
-        self._schema['lastModifiedDate'] = datetime.datetime.now(datetime.UTC).isoformat()
-        if name or version or len(self._schema.get('name', '')) == 0:
-            self._schema['name'] = f"{name or 'Domain Model'} v{self.version}"
-
     def _set_internal_schema(self, data: dict, version: str) -> None:
         self._validate_schema(data)
-        self._update_schema_metadata(version=version)
+        self.update_schema_metadata(version=version)
         self._schema = data
 
     def _validate_schema(self, schema: dict) -> None:
