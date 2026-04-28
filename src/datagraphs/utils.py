@@ -202,13 +202,13 @@ class SchemaTransformer:
                 new_prop["inverseOf"] = prop_def["inverseOf"]
             new_prop["inferLocation"] = False
             new_prop["isLabelSynonym"] = prop_def.get("isLabelSynonym", False)
-            new_prop["isFilterable"] = prop_def.get("isFilterable", False)
             new_prop["isSymmetric"] = False
         else:
             new_prop["isLangString"] = prop_def.get("isLangString", False)
             new_prop["isLabelSynonym"] = prop_def.get("isLabelSynonym", False)
-            new_prop["isFilterable"] = prop_def.get("isFilterable", False)
 
+        if "isFilterable" in prop_def:
+            new_prop["isFilterable"] = prop_def["isFilterable"]
         if "propertyValuePattern" in prop_def:
             new_prop["propertyValuePattern"] = prop_def["propertyValuePattern"]
         if "validationRules" in prop_def:

@@ -153,6 +153,7 @@ class TestSchemaTransformerOldToNew:
         assert prop["isOptional"] is True
         assert prop["isArray"] is False
         assert "propertyName" not in prop
+        assert "isFilterable" not in prop
         assert "propertyDatatype" not in prop
         assert "guid" not in prop
         assert "propertyOrder" not in prop
@@ -177,6 +178,7 @@ class TestSchemaTransformerOldToNew:
                     "guid": "g2",
                     "propertyOrder": 1,
                     "id": "urn:models:abc:classes:Test:relatedTo",
+                    "isFilterable": False # Should be ignored in new format
                 }],
             }]
         }
@@ -187,6 +189,7 @@ class TestSchemaTransformerOldToNew:
         assert prop["range"] == "OtherClass"
         assert prop["inverseOf"] == "relatedFrom"
         assert prop["isArray"] is True
+        assert prop["isFilterable"] is False
 
     def test_should_convert_enum_validation_rules(self):
         old = {
