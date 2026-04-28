@@ -312,7 +312,7 @@ class SchemaTransformer:
         if prop_def.get("isLabelSynonym"):
             old_prop["isLabelSynonym"] = True
         if prop_def.get("isFilterable"):
-            old_prop["isFilterable"] = True
+            old_prop["isFilterable"] = prop_def.get("isFilterable")
         if "inverseOf" in prop_def:
             old_prop["inverseOf"] = prop_def["inverseOf"]
         if "propertyValuePattern" in prop_def:

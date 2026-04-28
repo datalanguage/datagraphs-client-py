@@ -343,6 +343,12 @@ class TestSchemaPropertyFunctions:
         prop = self.schema.find_property(cls["properties"], "filterableProp")
         assert prop["isFilterable"] is True
 
+    def test_should_not_create_filterable_property_if_not_specified(self):
+        self.schema.create_property("TestClass", "filterableProp", DATATYPE.TEXT)
+        cls = self.schema.find_class("TestClass")
+        prop = self.schema.find_property(cls["properties"], "filterableProp")
+        assert "isFilterable" not in prop
+
     def test_should_assign_property_description(self):
         self.schema.create_property("TestClass", "propToDescribe", DATATYPE.INTEGER)
         self.schema.update_property("TestClass", "propToDescribe", description="This is a description")
@@ -363,10 +369,13 @@ class TestSchemaPropertyFunctions:
         self.schema.create_property("TestClass", "propToFilter", DATATYPE.INTEGER)
         cls = self.schema.find_class("TestClass")
         prop = self.schema.find_property(cls["properties"], "propToFilter")
-        assert prop["isFilterable"] is False 
+        assert "isFilterable" not in prop
         self.schema.update_property("TestClass", "propToFilter", is_filterable=True)
         prop = self.schema.find_property(cls["properties"], "propToFilter")
         assert prop["isFilterable"] is True
+        self.schema.update_property("TestClass", "propToFilter", is_filterable=False)
+        prop = self.schema.find_property(cls["properties"], "propToFilter")
+        assert prop["isFilterable"] is False
 
     def test_should_set_property_as_required(self):
         self.schema.create_property("TestClass", "propToRequire", DATATYPE.INTEGER)

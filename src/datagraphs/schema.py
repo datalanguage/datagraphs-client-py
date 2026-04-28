@@ -151,8 +151,7 @@ class Schema:
                     "isOptional": False,
                     "isArray": False,
                     "isLangString": is_label_prop_lang_string,
-                    "isLabelSynonym": False,
-                    "isFilterable": False,
+                    "isLabelSynonym": False
                 }
             ],
             "isAbstract": False,
@@ -199,7 +198,7 @@ class Schema:
                     prop_def.get('inverseOf', ''),
                     enums,
                     prop_def.get('isLabelSynonym', False),
-                    prop_def.get('isFilterable', False),
+                    prop_def.get('isFilterable', None),
                     apply_to_subclasses=False,
                 )
 
@@ -333,7 +332,7 @@ class Schema:
         inverse_of: str = "",
         enums: Optional[list] = None,
         is_synonym: bool = False,
-        is_filterable: bool = False,
+        is_filterable: Optional[bool] = None,
         apply_to_subclasses: bool = False,
     ) -> None:
         """Create a new property on a class.
@@ -381,7 +380,8 @@ class Schema:
         self._assign_inverse_of(prop_def, class_name, inverse_of, datatype)
         self._assign_enum(prop_def, datatype, enums)
         self._assign_is_synonym(prop_def, is_synonym)
-        self._assign_is_filterable(prop_def, is_filterable)
+        if is_filterable is not None:
+            self._assign_is_filterable(prop_def, is_filterable)
         if apply_to_subclasses:
             subclasses = self.find_subclasses(class_name)
             for subclass in subclasses:
@@ -431,8 +431,9 @@ class Schema:
                 "value": enums,
             }]
 
-    def _assign_is_filterable(self, prop_def: dict, is_filterable: bool) -> None:
-        prop_def["isFilterable"] = is_filterable
+    def _assign_is_filterable(self, prop_def: dict, is_filterable: Optional[bool] = None) -> None:
+        if is_filterable is not None:
+            prop_def["isFilterable"] = is_filterable
 
     def _assign_is_synonym(self, prop_def: dict, is_synonym: bool) -> None:
         prop_def["isLabelSynonym"] = is_synonym
