@@ -436,7 +436,8 @@ class Schema:
             prop_def["isFilterable"] = is_filterable
 
     def _assign_is_synonym(self, prop_def: dict, is_synonym: bool) -> None:
-        prop_def["isLabelSynonym"] = is_synonym
+        if is_synonym is not None:
+            prop_def["isLabelSynonym"] = is_synonym
 
     def _is_valid_inverse_of(self, class_name: str, inverse_of: str, datatype: Union[DATATYPE, str]) -> bool:
         is_valid = False
