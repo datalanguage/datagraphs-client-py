@@ -1756,14 +1756,18 @@ class Schema:
     semantically-annotated changelog relative to the state at construction.
     Tracking is always on and adds negligible overhead for typical schema sizes.
 
-    Every public mutating method is **atomic (all-or-nothing)**: the model is
-    snapshotted at the outermost call boundary and restored on any exception, so
-    a method that raises leaves the schema completely unchanged — never a partial
-    write. Compound mutations (e.g. :meth:`create_subclass`, or any
-    ``apply_to_subclasses`` cascade) are covered as a single unit: their inner
-    self-calls share the outer snapshot and never re-snapshot. Because a
-    rolled-back operation records nothing, :meth:`change_report` never surfaces a
-    change for an operation the caller saw raise.
+    Every public mutating method is **atomic (all-or-nothing)**: a rollback
+    transaction is opened at the outermost call boundary and replayed on any
+    exception, so a method that raises leaves the schema completely unchanged —
+    never a partial write. The transaction is scoped to the operation's footprint
+    (a shallow class-list snapshot plus a property-granular undo journal), so its
+    cost is proportional to what the operation touches, not to the schema size —
+    building an N-class schema is O(N), not O(N²). Compound mutations (e.g.
+    :meth:`create_subclass`, or any ``apply_to_subclasses`` cascade) are covered
+    as a single unit: their inner self-calls share the outer transaction and never
+    open a nested one. Because a rolled-back operation records nothing,
+    :meth:`change_report` never surfaces a change for an operation the caller saw
+    raise.
     """
 
     ALL_CLASSES = '__all_classes__'
@@ -1789,6 +1793,11 @@ class Schema:
         # so that update_schema_metadata() calls above are never recorded.
         self._change_log: list[dict] = []
         self._tracking_depth: int = 0
+        # Atomic-rollback transaction state (non-None only inside an outermost
+        # `_atomic`): the reverse-replayed undo journal and its id() dedupe sets.
+        self._undo: Optional[list[tuple]] = None
+        self._staged_classes: Optional[set[int]] = None
+        self._staged_props: Optional[set[int]] = None
         self._baseline: dict = _capture_baseline(self._schema)
 
     @staticmethod
@@ -1882,37 +1891,142 @@ class Schema:
     def _atomic(self, outermost: bool) -> Generator[None, None, None]:
         """All-or-nothing guard for a multi-step mutation.
 
-        At the OUTERMOST public-call boundary (``outermost=True``) this snapshots
-        the mutable model (``self._schema["classes"]`` — the only state any
-        public mutating method touches) and, on ANY exception from the body,
-        restores it *before* re-raising, so no mid-apply raise can leave a partial
-        write.  This guard wraps EVERY public mutating method (not just the
-        property create/update paths), making the whole mutating surface
-        all-or-nothing.  Combined with the success-only ``_record`` (ADR 0002), a
-        rolled-back op records nothing, so ``change_report`` never surfaces a
-        change for an operation the caller saw raise.
+        At the OUTERMOST public-call boundary (``outermost=True``) this opens a
+        rollback transaction over the mutable model (``self._schema["classes"]``
+        — the only state any public mutating method touches) and, on ANY
+        exception from the body, restores it *before* re-raising, so no mid-apply
+        raise can leave a partial write.  This guard wraps EVERY public mutating
+        method (not just the property create/update paths), making the whole
+        mutating surface all-or-nothing.  Combined with the success-only
+        ``_record`` (ADR 0002), a rolled-back op records nothing, so
+        ``change_report`` never surfaces a change for an operation the caller saw
+        raise.
 
-        The snapshot is taken only at the outermost boundary (reusing ``_track``'s
-        re-entrancy depth guard), so nested/cascade internals never each snapshot.
-        The cost is a single deep copy at mutation time, independent of cascade
-        breadth — the O(descendants) cascade asymptotics are unchanged.
+        **Footprint-scoped, undo-journalled rollback.**  Rollback state is
+        captured so its cost is proportional to what the operation actually
+        touches, not to the size of the whole schema:
+
+        * a SHALLOW copy of the class list (``list(classes)``) captures
+          membership, order and identity, so any append / removal / reordering of
+          *classes* is undoable in O(C) cheap references — no per-class deep copy;
+          and
+        * per-touch CONTENT is journalled lazily at the FINEST granularity the
+          mutation needs — a single appended property (:meth:`_track_added_prop`,
+          O(1) undo), a single in-place-modified property
+          (:meth:`_stage_prop`, deep copy of just that small prop dict), or a
+          whole class dict's scalar/structure (:meth:`_stage`, deep copy of one
+          class) for class-level edits.
+
+        Granularity matters on the cascade hot path: ``create_property`` /
+        ``update_property`` with ``apply_to_subclasses=True`` touch *one property
+        per class* across the whole hierarchy.  Journalling that single property
+        per target is O(1), so a cascade is O(C) regardless of how many properties
+        each class already carries.  The prior design deep-copied each entire
+        class dict (O(properties)), making a sequence of L wide cascades on C
+        classes cost O(L²·C); property-granular journalling makes it O(L·C).
+        Likewise, building an N-class schema one mutation at a time is O(N), not
+        the O(N²) of snapshotting the whole class list per mutation.  The
+        O(descendants) cascade asymptotics are unchanged.
+
+        On rollback the journal is replayed in REVERSE (so later edits undo before
+        earlier ones), then list membership/order/identity is restored by
+        slice-assignment (not rebinding), so any externally-held reference to the
+        classes list (e.g. via the public ``classes`` view or a prior
+        ``to_dict()``) stays consistent with the rolled-back model.  In-place
+        restores (``clear`` + ``update``) preserve dict identity, so references to
+        individual class/property dicts also stay valid.
 
         When ``outermost`` is ``False`` this is an inert pass-through: the
-        outermost frame already owns the snapshot for the whole re-entrant chain.
+        outermost frame already owns the transaction for the whole re-entrant
+        chain, so nested/cascade internals neither snapshot nor journal twice.
         """
         if not outermost:
             yield
             return
-        snapshot = copy.deepcopy(self._schema["classes"])
+        classes = self._schema["classes"]
+        structural = list(classes)          # O(C) references — no deep copy
+        self._undo: list[tuple] = []        # reverse-replayed rollback journal
+        self._staged_classes: set[int] = set()   # id() dedupe for class-level stages
+        self._staged_props: set[int] = set()     # id() dedupe for prop-level stages
         try:
             yield
         except BaseException:
-            # Restore IN PLACE (slice-assign), not by rebinding to a new list,
-            # so any externally-held reference to the classes list (e.g. via the
-            # public ``classes`` view or a prior ``to_dict()``) stays consistent
-            # with the rolled-back model after a raised mutation.
-            self._schema["classes"][:] = snapshot
+            # Replay the journal in reverse, then restore list structure.  Each
+            # entry is a (kind, *payload) tuple; in-place restores preserve dict
+            # identity so external references stay valid.
+            for entry in reversed(self._undo):
+                kind = entry[0]
+                if kind == "added":                 # ("added", props_list, prop_def)
+                    _, props_list, prop_def = entry
+                    try:
+                        props_list.remove(prop_def)
+                    except ValueError:
+                        pass                        # already gone — nothing to undo
+                else:                               # ("class"|"prop", target, pristine)
+                    _, target, pristine = entry
+                    target.clear()
+                    target.update(pristine)
+            classes[:] = structural
             raise
+        finally:
+            self._undo = None
+            self._staged_classes = None
+            self._staged_props = None
+
+    def _stage(self, class_def: dict) -> None:
+        """Journal a whole class dict's content for atomic rollback.
+
+        Call this BEFORE the first class-level mutation of *class_def* (a change
+        to a scalar key such as ``name`` / ``subClassOf`` / ``labelProperty`` /
+        ``description``, or a reordering/removal within its ``properties`` list).
+        The first call for a given class dict deep-copies it; later calls for the
+        same dict are no-ops, so the cost is one deep copy per distinct class the
+        operation edits at class level.
+
+        For the property-cascade hot path prefer the finer-grained
+        :meth:`_track_added_prop` / :meth:`_stage_prop`, which journal a single
+        property rather than the whole (potentially property-heavy) class dict.
+
+        Outside an atomic transaction (``_undo is None`` — e.g. during
+        construction, or a nested call whose outermost frame has already closed)
+        this is an inert no-op, so helpers that run before tracking state exists
+        stay safe.  Newly-appended class dicts need not be staged: the shallow
+        structural snapshot in :meth:`_atomic` drops them on rollback regardless.
+        """
+        if self._undo is None:
+            return
+        key = id(class_def)
+        if key not in self._staged_classes:
+            self._staged_classes.add(key)
+            self._undo.append(("class", class_def, copy.deepcopy(class_def)))
+
+    def _stage_prop(self, prop_def: dict) -> None:
+        """Journal a single property dict's content for atomic rollback.
+
+        Call this BEFORE the first in-place mutation of *prop_def* (the
+        cascade-update hot path).  Deep-copies only the small property dict, not
+        its owning class, so an N-target cascade costs O(N) rather than
+        O(N · properties-per-class).  Deduped per property dict; inert outside an
+        atomic transaction.
+        """
+        if self._undo is None:
+            return
+        key = id(prop_def)
+        if key not in self._staged_props:
+            self._staged_props.add(key)
+            self._undo.append(("prop", prop_def, copy.deepcopy(prop_def)))
+
+    def _track_added_prop(self, props_list: list, prop_def: dict) -> None:
+        """Journal a freshly-appended property so rollback can remove it (O(1)).
+
+        Call this immediately after appending *prop_def* to *props_list* (the
+        cascade-create hot path).  Recording the append rather than deep-copying
+        the owning class keeps a wide create-cascade O(C); on rollback the prop is
+        simply removed.  Inert outside an atomic transaction.
+        """
+        if self._undo is None:
+            return
+        self._undo.append(("added", props_list, prop_def))
 
     def _record(self, op: str, **args) -> None:
         """Append a single op-log entry to ``_change_log``.
@@ -2069,6 +2183,7 @@ class Schema:
             class_def = self.find_class(class_name)
             if class_def is None:
                 raise ClassNotFoundError(f"Class '{class_name}' not found")
+            self._stage(class_def)
             if new_name:
                 class_def["name"] = new_name
             if parent_class_name:
@@ -2100,6 +2215,7 @@ class Schema:
             if cascade_to_subclasses:
                 for other_def in self._schema["classes"]:
                     if other_def.get("subClassOf") == class_name:
+                        self._stage(other_def)
                         other_def.pop("subClassOf", None)
             if outermost:
                 self._record("delete_class", class_name=class_name, cascade_to_subclasses=cascade_to_subclasses)
@@ -2119,6 +2235,7 @@ class Schema:
             class_def = self.find_class(class_name)
             if class_def is None:
                 raise ClassNotFoundError(f"Class '{class_name}' not found")
+            self._stage(class_def)
             class_def["labelProperty"] = prop_name
             prop_def = self.find_property(class_def["properties"], prop_name)
             if prop_def is None:
@@ -2140,6 +2257,7 @@ class Schema:
             class_def = self.find_class(class_name)
             if class_def is None:
                 raise ClassNotFoundError(f"Class '{class_name}' not found")
+            self._stage(class_def)
             prop_name = class_def["labelProperty"]
             prop_def = self.find_property(class_def["properties"], prop_name)
             if prop_def is None:
@@ -2159,6 +2277,7 @@ class Schema:
             class_def = self.find_class(class_name)
             if class_def is None:
                 raise ClassNotFoundError(f"Class '{class_name}' not found")
+            self._stage(class_def)
             class_def['subClassOf'] = parent_class_name
             if outermost:
                 self._record("assign_baseclass", class_name=class_name, parent_class_name=parent_class_name)
@@ -2174,6 +2293,7 @@ class Schema:
             class_def = self.find_class(class_name)
             if class_def is None:
                 raise ClassNotFoundError(f"Class '{class_name}' not found")
+            self._stage(class_def)
             if description:
                 class_def['description'] = self._make_description(description)
             else:
@@ -2188,6 +2308,8 @@ class Schema:
                 if (prop_def.get("type") == "ObjectProperty"
                     and prop_def.get("range") == class_name)
             ]
+            if properties_to_remove:
+                self._stage(class_def)
             for prop_def in properties_to_remove:
                 class_def["properties"].remove(prop_def)
 
@@ -2267,9 +2389,10 @@ class Schema:
             # 1000s-deep subClassOf chain cannot RecursionError; FIX B4).  This is
             # ALL-OR-NOTHING: pre-validation cannot cover every mid-apply raise
             # (inverse_of / object-range / enum / datatype validity is per-target
-            # and resolved here), so the outermost `_atomic` guard snapshots the
-            # model and rolls back on ANY exception — no raise leaves a partial
-            # write, and `_record` (below, success-only) never lies about it.
+            # and resolved here), so each appended property is journalled
+            # (`_track_added_prop`, inside the core) and the outermost `_atomic`
+            # guard rolls back on ANY exception — no raise leaves a partial write,
+            # and `_record` (below, success-only) never lies about it.
             for cdef in target_defs:
                 self._create_property_on_class(
                     cdef, cdef["name"], prop_name, datatype, description,
@@ -2309,6 +2432,9 @@ class Schema:
         """
         prop_def = {"name": prop_name}
         class_def["properties"].append(prop_def)
+        # Journal the append so a mid-build raise (or a later cascade target's
+        # failure) rolls it back in O(1) — no whole-class deep copy.
+        self._track_added_prop(class_def["properties"], prop_def)
         self._assign_datatype(prop_def, datatype, is_nested, is_lang_string)
         self._assign_property_description(prop_def, description)
         self._assign_is_optional(prop_def, is_optional)
@@ -2460,6 +2586,7 @@ class Schema:
             # outermost `_atomic` guard — no partial write, and `_record` (below,
             # success-only) never lies about a raised op.
             for cdef, pdef in targets:
+                self._stage_prop(pdef)
                 self._update_property_on_class(
                     cdef, pdef, cdef["name"], datatype, description, is_optional,
                     is_array, is_nested, is_lang_string, inverse_of, enums,
@@ -2529,6 +2656,7 @@ class Schema:
             conflict_prop_def = self.find_property(class_def["properties"], new_prop_name)
             if conflict_prop_def is not None:
                 raise PropertyExistsError(f"The new property name '{new_prop_name}' is already in use")
+            self._stage(class_def)
             prop_def["name"] = new_prop_name
             if class_def["labelProperty"] == old_prop_name:
                 class_def["labelProperty"] = new_prop_name
@@ -2550,6 +2678,7 @@ class Schema:
             prop_def = self.find_property(class_def["properties"], prop_name)
             if prop_def is None:
                 raise PropertyNotFoundError(f"Property '{prop_name}' not found in class '{class_name}'")
+            self._stage(class_def)
             class_def["properties"].remove(prop_def)
             if outermost:
                 self._record("delete_property", class_name=class_name, prop_name=prop_name)
@@ -2648,6 +2777,7 @@ class Schema:
         with self._track() as outermost, self._atomic(outermost):
             for class_def in self._schema['classes']:
                 if class_def['name'] in property_orders:
+                    self._stage(class_def)
                     ordered_names = property_orders[class_def['name']]
                     props_by_name = {p['name']: p for p in class_def['properties']}
                     ordered = [props_by_name[n] for n in ordered_names if n in props_by_name]

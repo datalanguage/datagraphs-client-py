@@ -5158,3 +5158,107 @@ class TestAtomicity:
         # reflects the rolled-back (unchanged) state.
         assert external_ref is s.classes, "rollback rebound the classes list object"
         assert s.to_dict()["classes"] == before["classes"]
+
+
+class TestMutationPerformanceScaling:
+    """Regression tests for the atomic-rollback snapshot cost (perf bug).
+
+    The all-or-nothing ``_atomic`` guard originally deep-copied the ENTIRE class
+    list on every outermost mutation.  That made two common workloads quadratic:
+
+      * **Narrow construction.**  Building an N-class schema one ``create_class`` /
+        ``create_subclass`` at a time deep-copied the whole (growing) class list
+        per call — O(N²).  An 8x larger schema took ~64x longer, not ~8x.
+      * **Accumulated wide cascades.**  A sequence of L ``create_property`` /
+        ``update_property`` calls with ``apply_to_subclasses=True`` at fixed
+        subclass-count C deep-copied every class (each carrying the properties
+        added by prior calls) on every call — O(L²·C).  8x the calls took ~55x
+        longer.
+
+    The fix scopes rollback state to each operation's footprint: a shallow class-
+    list snapshot for structure plus a property-granular undo journal for the
+    cascade hot path (one O(1) entry per appended/updated property instead of a
+    whole-class deep copy).  Construction becomes O(N) and accumulated cascades
+    O(L·C).
+
+    These tests time an 8x size step and assert the ratio stays well under the
+    quadratic prediction.  Pre-fix they FAIL (~64x / ~55x ≫ the 24x ceiling);
+    post-fix they pass comfortably (~8x).  The 24x ceiling sits far from both the
+    linear (~8x) and quadratic (~64x) predictions, so the test discriminates the
+    asymptotic class while tolerating timing noise.
+    """
+
+    def _empty(self) -> DatagraphsSchema:
+        return DatagraphsSchema(name="T", version="1.0")
+
+    def test_narrow_construction_is_subquadratic_in_class_count(self):
+        """Building N classes one at a time must scale ~linearly in N, not O(N²)
+        (the whole-list deep-copy-per-mutation snapshot bug)."""
+        import time
+
+        def time_build(n: int) -> float:
+            start = time.perf_counter()
+            s = self._empty()
+            s.create_class("Root")
+            for i in range(n):
+                s.create_subclass(f"C{i}", "d", "Root")
+            return time.perf_counter() - start
+
+        small = time_build(200)
+        large = time_build(1600)  # 8x the classes
+        assert large < small * 24 + 0.2, (
+            f"super-linear (O(N^2)?) construction: small={small:.4f}s "
+            f"large={large:.4f}s ratio={large / max(small, 1e-6):.1f}x"
+        )
+
+    def _wide_tree(self, n_children: int) -> DatagraphsSchema:
+        s = self._empty()
+        s.create_class("Animal")
+        for i in range(n_children):
+            s.create_subclass(f"S{i}", "d", "Animal")
+        return s
+
+    def test_repeated_wide_create_cascade_is_subquadratic_in_op_count(self):
+        """A sequence of L wide create-cascades at fixed C must scale ~linearly in
+        L, not O(L²·C) (per-call whole-class deep copy of property-heavy classes)."""
+        import time
+
+        def time_cascades(n_ops: int) -> float:
+            s = self._wide_tree(200)  # fixed C
+            start = time.perf_counter()
+            for k in range(n_ops):
+                s.create_property("Animal", f"p{k}", DATATYPE.TEXT,
+                                  apply_to_subclasses=True)
+            return time.perf_counter() - start
+
+        small = time_cascades(15)
+        large = time_cascades(120)  # 8x the ops, C fixed
+        assert large < small * 24 + 0.2, (
+            f"super-linear (O(L^2*C)?) accumulated create-cascade: small={small:.4f}s "
+            f"large={large:.4f}s ratio={large / max(small, 1e-6):.1f}x"
+        )
+
+    def test_repeated_wide_update_cascade_is_subquadratic_in_op_count(self):
+        """A sequence of L wide update-cascades at fixed C must scale ~linearly in
+        L, not O(L²·C) — the update hot path journals one property per target,
+        not the whole class dict."""
+        import time
+
+        def time_updates(n_ops: int) -> float:
+            s = self._wide_tree(200)  # fixed C
+            # Seed properties to update, OUTSIDE the timed region.
+            for k in range(n_ops):
+                s.create_property("Animal", f"p{k}", DATATYPE.TEXT,
+                                  apply_to_subclasses=True)
+            start = time.perf_counter()
+            for k in range(n_ops):
+                s.update_property("Animal", f"p{k}", is_optional=False,
+                                  apply_to_subclasses=True)
+            return time.perf_counter() - start
+
+        small = time_updates(15)
+        large = time_updates(120)  # 8x the ops, C fixed
+        assert large < small * 24 + 0.2, (
+            f"super-linear (O(L^2*C)?) accumulated update-cascade: small={small:.4f}s "
+            f"large={large:.4f}s ratio={large / max(small, 1e-6):.1f}x"
+        )
