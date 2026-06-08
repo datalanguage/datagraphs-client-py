@@ -1,6 +1,12 @@
 import pytest
 from datagraphs.schema import Schema as DatagraphsSchema
-from datagraphs.schema import PropertyExistsError, InvalidInversePropertyError, SchemaError, ClassNotFoundError, PropertyNotFoundError
+from datagraphs.schema import (
+    PropertyExistsError,
+    InvalidInversePropertyError,
+    SchemaError,
+    ClassNotFoundError,
+    PropertyNotFoundError,
+)
 from datagraphs.enums import DATATYPE
 
 class TestSchemaInitialization:

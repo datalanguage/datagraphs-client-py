@@ -1,0 +1,10 @@
+# SDLC working artifacts — only plan documents, brainstorm outputs, and solutions are committed
+*
+!*/
+!**/*/
+!plans/**/*.brief.md
+!plans/**/*.plan.md
+!plans/**/*.ticket.md
+!brainstorms/**/output.md
+!solutions/**/*.md
+!.gitignore
