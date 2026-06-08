@@ -4,7 +4,7 @@ import json
 import datetime
 from collections import deque
 from typing import Optional, Self, Union
-from datagraphs.enums import DATATYPE
+from datagraphs.enums import DATATYPE, REPORT_FORMAT
 from datagraphs.utils import SchemaTransformer
 from datagraphs.schema_report import build_change_report
 from datagraphs.schema_tracker import ChangeTracker
@@ -898,7 +898,9 @@ class Schema:
         """
         return Schema.create_from(ChangeTracker._capture_baseline(self._schema))
 
-    def change_report(self, fmt: str = "text") -> "str | list[dict]":
+    def change_report(
+        self, fmt: REPORT_FORMAT = REPORT_FORMAT.TEXT
+    ) -> "str | list[dict]":
         """Return a net-effect changelog of all changes since construction.
 
         Computes the structural delta between the baseline (state at
@@ -928,19 +930,24 @@ class Schema:
         op genuinely fans out to one record per annotated subclass, so the report
         size — and therefore its cost — is inherent to annotating ``C`` subclasses.
 
-        :param fmt: Output format.
+        :param fmt: Output format, a :class:`~datagraphs.enums.REPORT_FORMAT`.
+            As that enum is a :class:`~enum.StrEnum`, the equivalent string
+            (``"text"`` / ``"records"``) is also accepted.
 
-            * ``"text"`` *(default)*: returns a deterministic plain-text
-              changelog ``str`` with a header count line and per-class grouping.
-              Best-effort human rendering — see *Supported surface* above.
-            * ``"records"``: returns a ``list[dict]`` of structured change
-              records for programmatic consumption — the supported, guaranteed
-              output.  See *Record shape* below.
+            * :attr:`~datagraphs.enums.REPORT_FORMAT.TEXT` *(default)*: returns a
+              deterministic plain-text changelog ``str`` with a header count line
+              and per-class grouping.  Best-effort human rendering — see
+              *Supported surface* above.
+            * :attr:`~datagraphs.enums.REPORT_FORMAT.RECORDS`: returns a
+              ``list[dict]`` of structured change records for programmatic
+              consumption — the supported, guaranteed output.  See *Record shape*
+              below.
 
-        :returns: A ``str`` when ``fmt="text"``; a ``list[dict]`` when
-            ``fmt="records"``.  Returns ``""`` (text) or ``[]`` (records) when
-            nothing has changed since construction.
-        :raises ValueError: If *fmt* is not ``"text"`` or ``"records"``.
+        :returns: A ``str`` for ``REPORT_FORMAT.TEXT``; a ``list[dict]`` for
+            ``REPORT_FORMAT.RECORDS``.  Returns ``""`` (text) or ``[]`` (records)
+            when nothing has changed since construction.
+        :raises ValueError: If *fmt* is not a member (or value) of
+            :class:`~datagraphs.enums.REPORT_FORMAT`.
 
         .. note::
 

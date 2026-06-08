@@ -19,6 +19,8 @@ from itertools import groupby
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from datagraphs.enums import REPORT_FORMAT
+
 
 # ---------------------------------------------------------------------------
 # Structural diff layer — Phase 3
@@ -1776,12 +1778,13 @@ class TextChangeRenderer(ChangeRenderer):
         return out
 
 
-#: Output-format registry: maps a ``fmt`` name to its renderer strategy.  Adding
-#: a format is one entry here plus its :class:`ChangeRenderer` subclass — no
-#: branching in :func:`build_change_report`, which selects the strategy by lookup.
-_RENDERERS: dict[str, type[ChangeRenderer]] = {
-    "text": TextChangeRenderer,
-    "records": RecordChangeRenderer,
+#: Output-format registry: maps a :class:`REPORT_FORMAT` to its renderer
+#: strategy.  Adding a format is one entry here plus its :class:`ChangeRenderer`
+#: subclass — no branching in :func:`build_change_report`, which coerces the
+#: requested format to the enum and selects the strategy by lookup.
+_RENDERERS: dict[REPORT_FORMAT, type[ChangeRenderer]] = {
+    REPORT_FORMAT.TEXT: TextChangeRenderer,
+    REPORT_FORMAT.RECORDS: RecordChangeRenderer,
 }
 
 
@@ -1789,7 +1792,7 @@ def build_change_report(
     baseline: dict,
     change_log: list[dict],
     current: dict,
-    fmt: str = "text",
+    fmt: REPORT_FORMAT = REPORT_FORMAT.TEXT,
 ) -> "str | list[dict]":
     """Compute a net-effect changelog from a schema's tracking state.
 
@@ -1803,19 +1806,26 @@ def build_change_report(
         (``Schema._baseline``).
     :param change_log: The recorded op-log (``Schema._change_log``).
     :param current: The live schema dict (``Schema._schema``).
-    :param fmt: ``"text"`` for the best-effort human-readable changelog, or
-        ``"records"`` for the guaranteed structured ``list[dict]``.
-    :returns: A ``str`` when ``fmt="text"``; a ``list[dict]`` when
-        ``fmt="records"``. Empty (``""`` / ``[]``) when nothing changed.
-    :raises ValueError: If *fmt* is not a registered format.
+    :param fmt: A :class:`REPORT_FORMAT` (or an equivalent string, since the enum
+        is a :class:`~enum.StrEnum`): :attr:`REPORT_FORMAT.TEXT` for the
+        best-effort human-readable changelog, or :attr:`REPORT_FORMAT.RECORDS` for
+        the guaranteed structured ``list[dict]``.
+    :returns: A ``str`` for :attr:`REPORT_FORMAT.TEXT`; a ``list[dict]`` for
+        :attr:`REPORT_FORMAT.RECORDS`. Empty (``""`` / ``[]``) when nothing changed.
+    :raises ValueError: If *fmt* is not a member (or value) of :class:`REPORT_FORMAT`.
     """
+    # Coerce to the enum: this validates AND normalises in one step — a member
+    # passes through, a valid string ("text"/"records") maps to its member, and
+    # anything else raises ValueError.  The registry lookup below is then a clean,
+    # always-present enum-keyed dispatch.
     try:
-        renderer = _RENDERERS[fmt]()
-    except KeyError:
+        fmt = REPORT_FORMAT(fmt)
+    except ValueError:
         raise ValueError(
             f"change_report() fmt must be one of "
-            f"{sorted(_RENDERERS)}, got {fmt!r}"
+            f"{[f.value for f in REPORT_FORMAT]}, got {fmt!r}"
         ) from None
+    renderer = _RENDERERS[fmt]()
     rename_map = _replay_identities(baseline, change_log)
     raw_changes = _diff(baseline, current, rename_map)
     annotated = _annotate(raw_changes, change_log, baseline, current, rename_map)

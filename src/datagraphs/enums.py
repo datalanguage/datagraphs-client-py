@@ -25,3 +25,8 @@ class VALIDATION_MODE(StrEnum):
     PROMPT = 'prompt'
     NO_PROMPT = 'no-prompt'
     BYPASS = 'bypass'
+
+class REPORT_FORMAT(StrEnum):
+    """Enumeration of output formats for a schema change report."""
+    TEXT = 'text'
+    RECORDS = 'records'
