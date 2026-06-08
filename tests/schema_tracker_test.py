@@ -20,7 +20,7 @@ from datagraphs.schema import (
     ClassNotFoundError,
     PropertyNotFoundError,
 )
-from datagraphs.enums import DATATYPE
+from datagraphs.enums import DATATYPE, REPORT_FORMAT
 
 
 class TestChangeTrackingBaseline:
@@ -685,12 +685,12 @@ class TestAtomicity:
         """The schema is byte-identical to *before* and the report is empty in
         BOTH formats — proving no partial write and no lying audit trail."""
         assert s.to_dict() == before, "partial write — schema mutated despite raise"
-        assert s.change_report("records") == [], (
+        assert s.change_report(REPORT_FORMAT.RECORDS) == [], (
             f"report lies: surfaces a change for a raised op:\n"
-            f"{s.change_report('records')}"
+            f"{s.change_report(REPORT_FORMAT.RECORDS)}"
         )
-        assert s.change_report("text") == "", (
-            f"text report lies about a raised op:\n{s.change_report('text')}"
+        assert s.change_report(REPORT_FORMAT.TEXT) == "", (
+            f"text report lies about a raised op:\n{s.change_report(REPORT_FORMAT.TEXT)}"
         )
 
     # ------------------------------------------------------------------

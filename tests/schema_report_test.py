@@ -23,7 +23,7 @@ from datagraphs.schema_report import (
     _replay_identities,
     _annotate,
 )
-from datagraphs.enums import DATATYPE
+from datagraphs.enums import DATATYPE, REPORT_FORMAT
 
 
 # ---------------------------------------------------------------------------
@@ -1240,7 +1240,8 @@ class TestChangeReportRendering:
     """Phase 6 — change_report() public method, renderers, and determinism.
 
     Verifies:
-    - change_report() returns str; change_report(fmt='records') returns list[dict].
+    - change_report() returns str; change_report(REPORT_FORMAT.RECORDS) returns
+      list[dict].
     - change_report('bogus') raises ValueError.
     - The method is strictly read-only: _schema, _baseline, _change_log are never
       mutated, and two consecutive calls return identical output.
@@ -1373,19 +1374,35 @@ class TestChangeReportRendering:
     def test_text_format_returns_str(self):
         s = self._substance_schema()
         s.create_class("Extra")
-        result = s.change_report(fmt="text")
+        result = s.change_report(fmt=REPORT_FORMAT.TEXT)
         assert isinstance(result, str)
 
     def test_records_format_returns_list(self):
         s = self._substance_schema()
         s.create_class("Extra")
-        result = s.change_report(fmt="records")
+        result = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         assert isinstance(result, list)
 
     def test_records_format_list_contains_dicts(self):
         s = self._substance_schema()
         s.create_class("Extra")
-        result = s.change_report(fmt="records")
+        result = s.change_report(fmt=REPORT_FORMAT.RECORDS)
+        assert all(isinstance(r, dict) for r in result)
+
+    # ------------------------------------------------------------------
+    # REPORT_FORMAT enum accepted
+    # ------------------------------------------------------------------
+
+    def test_text_enum_member_returns_str(self):
+        s = self._substance_schema()
+        s.create_class("Extra")
+        assert isinstance(s.change_report(REPORT_FORMAT.TEXT), str)
+
+    def test_records_enum_member_returns_list_of_dicts(self):
+        s = self._substance_schema()
+        s.create_class("Extra")
+        result = s.change_report(REPORT_FORMAT.RECORDS)
+        assert isinstance(result, list)
         assert all(isinstance(r, dict) for r in result)
 
     # ------------------------------------------------------------------
@@ -1443,10 +1460,10 @@ class TestChangeReportRendering:
         assert first == second
 
     def test_two_consecutive_calls_return_equal_records(self):
-        """Calling change_report(fmt='records') twice returns equal lists."""
+        """Calling change_report(fmt=REPORT_FORMAT.RECORDS) twice returns equal lists."""
         s = self._happy_path_schema()
-        first = s.change_report(fmt="records")
-        second = s.change_report(fmt="records")
+        first = s.change_report(fmt=REPORT_FORMAT.RECORDS)
+        second = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         assert first == second
 
     # ------------------------------------------------------------------
@@ -1477,7 +1494,7 @@ class TestChangeReportRendering:
 
         s1 = build()
         s2 = build()
-        assert s1.change_report(fmt="records") == s2.change_report(fmt="records")
+        assert s1.change_report(fmt=REPORT_FORMAT.RECORDS) == s2.change_report(fmt=REPORT_FORMAT.RECORDS)
 
     def test_determinism_ordering_stable_across_multiple_classes(self):
         """Multiple class changes are emitted alphabetically regardless of
@@ -1519,7 +1536,7 @@ class TestChangeReportRendering:
     def test_no_changes_records_is_empty_list(self):
         """A freshly loaded schema with no mutations returns an empty list."""
         s = self._substance_schema()
-        assert s.change_report(fmt="records") == []
+        assert s.change_report(fmt=REPORT_FORMAT.RECORDS) == []
 
     # ------------------------------------------------------------------
     # Brief happy-path scenario: end-to-end content assertions
@@ -1582,7 +1599,7 @@ class TestChangeReportRendering:
 
     def test_happy_path_records_drug_entry(self):
         """Drug record must have op=subclass_created with parent+inherited detail."""
-        records = self._happy_path_schema().change_report(fmt="records")
+        records = self._happy_path_schema().change_report(fmt=REPORT_FORMAT.RECORDS)
         drug = next((r for r in records if r.get("target") == "Drug"), None)
         assert drug is not None
         assert drug["kind"] == "class"
@@ -1592,7 +1609,7 @@ class TestChangeReportRendering:
 
     def test_happy_path_records_dose_renamed_and_modified(self):
         """dose record must be op=renamed with from/to and fields for isOptional."""
-        records = self._happy_path_schema().change_report(fmt="records")
+        records = self._happy_path_schema().change_report(fmt=REPORT_FORMAT.RECORDS)
         dose = next((r for r in records if r.get("target") == "Substance.dose"), None)
         assert dose is not None
         assert dose["kind"] == "property"
@@ -1607,7 +1624,7 @@ class TestChangeReportRendering:
 
     def test_happy_path_records_deprecated_code_removed(self):
         """deprecatedCode record must be op=removed with no extraneous keys."""
-        records = self._happy_path_schema().change_report(fmt="records")
+        records = self._happy_path_schema().change_report(fmt=REPORT_FORMAT.RECORDS)
         dep = next(
             (r for r in records if r.get("target") == "Substance.deprecatedCode"), None
         )
@@ -1622,7 +1639,7 @@ class TestChangeReportRendering:
 
     def test_happy_path_records_no_date_entries(self):
         """No record may reference createdDate or lastModifiedDate."""
-        records = self._happy_path_schema().change_report(fmt="records")
+        records = self._happy_path_schema().change_report(fmt=REPORT_FORMAT.RECORDS)
         for rec in records:
             assert "createdDate" not in rec.get("target", "")
             assert "lastModifiedDate" not in rec.get("target", "")
@@ -1631,7 +1648,7 @@ class TestChangeReportRendering:
 
     def test_happy_path_records_count(self):
         """Happy path must produce exactly 3 records: Drug, Substance.dose, Substance.deprecatedCode."""
-        records = self._happy_path_schema().change_report(fmt="records")
+        records = self._happy_path_schema().change_report(fmt=REPORT_FORMAT.RECORDS)
         assert len(records) == 3
 
     # ------------------------------------------------------------------
@@ -1642,7 +1659,7 @@ class TestChangeReportRendering:
         """A plain added class record must contain only target/kind/op."""
         s = self._animal_schema()
         s.create_class("NewClass")
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         added = next((r for r in records if r.get("target") == "NewClass"), None)
         assert added is not None
         assert set(added.keys()) == {"target", "kind", "op"}
@@ -1651,7 +1668,7 @@ class TestChangeReportRendering:
         """A removed property record must contain only target/kind/op."""
         s = self._animal_schema()
         s.delete_property("Animal", "age")
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         removed = next(
             (r for r in records if r.get("target") == "Animal.age"), None
         )
@@ -1662,7 +1679,7 @@ class TestChangeReportRendering:
         """A modified property record must have 'fields' but no 'from' or 'to'."""
         s = self._animal_schema()
         s.update_property("Animal", "age", is_optional=False)
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         mod = next((r for r in records if r.get("target") == "Animal.age"), None)
         assert mod is not None
         assert mod["op"] == "modified"
@@ -1674,7 +1691,7 @@ class TestChangeReportRendering:
         """A renamed property record must have 'from' and 'to' keys."""
         s = self._animal_schema()
         s.rename_property("Animal", "age", "years")
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         ren = next((r for r in records if r.get("target") == "Animal.years"), None)
         assert ren is not None
         assert ren["op"] == "renamed"
@@ -1687,7 +1704,7 @@ class TestChangeReportRendering:
         """A subclass_created record must have 'detail' but no 'from'/'to'/'fields'."""
         s = self._animal_schema()
         s.create_subclass("Cat", "A cat", "Animal")
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         sub = next((r for r in records if r.get("target") == "Cat"), None)
         assert sub is not None
         assert sub["op"] == "subclass_created"
@@ -1701,7 +1718,7 @@ class TestChangeReportRendering:
         """A reordered class record must have 'detail' with order list."""
         s = self._animal_schema()
         s.assign_property_orders({"Animal": ["age", "label"]})
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         reord = next((r for r in records if r.get("op") == "reordered"), None)
         assert reord is not None
         assert reord["target"] == "Animal"
@@ -1717,7 +1734,7 @@ class TestChangeReportRendering:
         after_order) must not appear in any record's detail dict."""
         s = self._animal_schema()
         s.assign_property_orders({"Animal": ["age", "label"]})
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         for rec in records:
             detail = rec.get("detail", {})
             assert "reorder_candidate" not in detail
@@ -1917,7 +1934,7 @@ class TestReviewFindings:
         s.assign_label_property("Animal", "x", is_lang_string=True)
         s.rename_property("Animal", "x", "years")
 
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         prop = [r for r in records if r["target"] == "Animal.years"]
         assert len(prop) == 1, records
         assert prop[0].get("detail", {}).get("label_property") == "years", records
@@ -1940,7 +1957,7 @@ class TestReviewFindings:
         s.delete_class("B")
         s.update_class("A", new_name="B")
 
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         renamed = [r for r in records if r["op"] == "renamed" and r.get("from") == "A" and r.get("to") == "B"]
         removed = [r for r in records if r["op"] == "removed" and r["kind"] == "class" and r["target"] == "B"]
         assert len(renamed) == 1, records
@@ -1958,7 +1975,7 @@ class TestReviewFindings:
         s.delete_property("Animal", "q")
         s.rename_property("Animal", "p", "q")
 
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         renamed = [r for r in records if r["op"] == "renamed" and r.get("from") == "p" and r.get("to") == "q"]
         removed = [r for r in records if r["op"] == "removed" and r["kind"] == "property" and r["target"] == "Animal.q"]
         assert len(renamed) == 1, records
@@ -1976,7 +1993,7 @@ class TestReviewFindings:
         # Reorder the surviving properties (label/age) relative to baseline.
         s.assign_property_orders({"Animal": ["age", "label", "colour"]})
 
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         reordered = [r for r in records if r["op"] == "reordered"]
         assert len(reordered) == 1, records
         assert reordered[0]["target"] == "Animal"
@@ -2006,7 +2023,7 @@ class TestReviewFindings:
         # change on Dog, so no Dog.age Change exists in the diff.
         s.update_property("Animal", "age", is_optional=False, apply_to_subclasses=True)
 
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         parent = [r for r in records if r["target"] == "Animal.age"]
         assert len(parent) == 1, records
         assert "Dog" in parent[0].get("detail", {}).get("applied_to_subclasses", []), records
@@ -2045,7 +2062,7 @@ class TestReviewFindings:
             s.assign_property_orders({f"C{i}": ["b", "a", "c"]})
 
         start = time.perf_counter()
-        records = s.change_report(fmt="records")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
         elapsed = time.perf_counter() - start
 
         # Correctness: every class got a 'c' property added and a reorder.
@@ -2363,8 +2380,8 @@ class TestReviewFindings2:
         ``test_text_fields_content_divergence_is_a_known_limitation``).  Returns
         the agreed Counter.
         """
-        records = s.change_report(fmt="records")
-        text = s.change_report(fmt="text")
+        records = s.change_report(fmt=REPORT_FORMAT.RECORDS)
+        text = s.change_report(fmt=REPORT_FORMAT.TEXT)
         from_records = _logical_changes_from_records(records)
         from_text = _logical_changes_from_text(text)
         assert from_text == from_records, (
@@ -2402,12 +2419,12 @@ class TestReviewFindings2:
         s.delete_class("B")
         s.update_class("A", new_name="B")
 
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         ops = {(r["target"], r["op"]) for r in records}
         assert ("B", "renamed") in ops, records
         assert ("B", "removed") in ops, records
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "[renamed from A]" in text, text
         assert "- B [removed]" in text, text  # destructive op NOT swallowed
 
@@ -2423,13 +2440,13 @@ class TestReviewFindings2:
         s.create_property("Animal", "colour", DATATYPE.TEXT)
         s.assign_property_orders({"Animal": ["age", "label", "colour"]})
 
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         ops = {(r["target"], r["op"]) for r in records}
         assert ("Animal", "reordered") in ops, records
         assert ("Animal", "modified") in ops, records
         assert ("Animal.colour", "added") in ops, records
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "[reordered]" in text, text
         assert "properties reordered:" in text, text
         assert "[modified]" in text, text
@@ -2442,7 +2459,7 @@ class TestReviewFindings2:
         single block (no spurious extra lines) in both formats."""
         s = self._animal()
         s.assign_class_description("Animal", "desc")
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert text.count("[modified]") == 1, text
         assert "[reordered]" not in text and "[removed]" not in text, text
         self._assert_formats_agree(s)
@@ -2479,12 +2496,12 @@ class TestReviewFindings2:
         s.update_class("A", new_name="B")
         s.update_class("C", new_name="A")
 
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         b_title = [r for r in records if r["target"] == "B.title"]
         assert len(b_title) == 1, records
         assert b_title[0].get("detail", {}).get("label_property") == "title", records
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         # The label-property fusion drops the bare class labelProperty flip, so
         # the property line carries the designation; the bare flip must be gone.
         assert "B.title" not in text or "labelProperty" not in text, text
@@ -2506,7 +2523,7 @@ class TestReviewFindings2:
         s.update_class("Parent", new_name="P2")
         s.update_class("Other", new_name="Parent")  # recycle freed name
 
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         p2 = [r for r in records if r["target"] == "P2.weight"]
         assert len(p2) == 1, records
         assert "Sub" in p2[0].get("detail", {}).get("applied_to_subclasses", []), records
@@ -2517,7 +2534,7 @@ class TestReviewFindings2:
         not break the common case)."""
         s = self._animal()
         s.assign_label_property("Animal", "age", is_lang_string=False)
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         animal_age = [r for r in records if r["target"] == "Animal.age"]
         assert len(animal_age) == 1, records
         assert animal_age[0].get("detail", {}).get("label_property") == "age", records
@@ -2539,7 +2556,7 @@ class TestReviewFindings2:
         s.update_property("Animal", "age", is_optional=False, apply_to_subclasses=True)
         s.create_class("Cat", parent_class_name="Animal")  # AFTER the op
 
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         parent = [r for r in records if r["target"] == "Animal.age"]
         assert len(parent) == 1, records
         applied = parent[0].get("detail", {}).get("applied_to_subclasses", [])
@@ -2560,7 +2577,7 @@ class TestReviewFindings2:
         # Parent already False => no parent diff effect; only Dog changes.
         s.update_property("Animal", "age", is_optional=False, apply_to_subclasses=True)
 
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         parent = [r for r in records if r["target"] == "Animal.age"]
         assert len(parent) == 1, records
         assert "Dog" in parent[0].get("detail", {}).get("applied_to_subclasses", []), records
@@ -2583,7 +2600,7 @@ class TestReviewFindings2:
         # depth 1 because every arg is now passed by keyword).
         puppy_age = s.find_property(s.find_class("Puppy")["properties"], "age")
         assert puppy_age["isOptional"] is False
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         parent = [r for r in records if r["target"] == "Animal.age"]
         applied = parent[0].get("detail", {}).get("applied_to_subclasses", [])
         assert set(applied) == {"Dog", "Puppy"}, records
@@ -2597,7 +2614,7 @@ class TestReviewFindings2:
         s._tracker._baseline = copy.deepcopy(s._schema)
         s._tracker.change_log.clear()
         s.update_property("Animal", "age", is_optional=False)  # no flag
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         parent = [r for r in records if r["target"] == "Animal.age"]
         assert len(parent) == 1, records
         assert "applied_to_subclasses" not in (parent[0].get("detail") or {}), records
@@ -2629,13 +2646,13 @@ class TestReviewFindings2:
         s.assign_property_orders({"A": ["p3", "p2", "p1"]})
         s.assign_property_orders({"A": ["p2", "p3", "p1"]})
 
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         reordered = [r for r in records if r["op"] == "reordered"]
         assert len(reordered) == 1, records
         # The single net reorder reflects the FINAL order.
         assert reordered[0]["detail"]["order"] == ["p2", "p3", "p1"], records
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert text.count("[reordered]") == 1, text
         assert text.count("properties reordered:") == 1, text
         self._assert_formats_agree(s)
@@ -2659,9 +2676,9 @@ class TestReviewFindings2:
         s.assign_property_orders({"A": ["p2", "p1"]})  # swap
         s.assign_property_orders({"A": ["p1", "p2"]})  # swap back -> baseline
 
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         assert [r for r in records if r["op"] == "reordered"] == [], records
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "[reordered]" not in text, text
         self._assert_formats_agree(s)
 
@@ -2711,7 +2728,7 @@ class TestReviewFindings2:
                 flag = not flag
                 s.update_property("Root", "p", is_optional=flag, apply_to_subclasses=True)
             start = time.perf_counter()
-            s.change_report(fmt="records")
+            s.change_report(fmt=REPORT_FORMAT.RECORDS)
             return time.perf_counter() - start
 
         ops = 40
@@ -2820,7 +2837,7 @@ class TestReviewFindings2:
         s.assign_property_orders({"Ord": ["o2", "o1"]})
         s.assign_property_orders({"Ord": ["o2", "label", "o1"]})
 
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         ops = {(r["target"], r["op"]) for r in records}
 
         # --- Recycle: BOTH renamed and removed for X ---
@@ -2855,7 +2872,7 @@ class TestReviewFindings2:
         self._assert_formats_agree(s)
 
         # --- Text spot-checks for the destructive/ordering signals ---
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "- X [removed]" in text, text
         assert "[renamed from Y]" in text, text
         assert "properties reordered:" in text, text
@@ -2891,10 +2908,10 @@ class TestReviewFindings3:
         return DatagraphsSchema.create_from(copy.deepcopy(s.to_dict()))
 
     def _ops(self, s: DatagraphsSchema) -> set[tuple[str, str]]:
-        return {(r["target"], r["op"]) for r in s.change_report("records")}
+        return {(r["target"], r["op"]) for r in s.change_report(REPORT_FORMAT.RECORDS)}
 
     def _rec(self, s: DatagraphsSchema, target: str) -> list[dict]:
-        return [r for r in s.change_report("records") if r["target"] == target]
+        return [r for r in s.change_report(REPORT_FORMAT.RECORDS) if r["target"] == target]
 
     # ==================================================================
     # CONTRACT 1 — recycle-by-rename: delete B; rename A->B
@@ -2911,11 +2928,11 @@ class TestReviewFindings3:
         ops = self._ops(s)
         assert ("B", "renamed") in ops, ops
         assert ("B", "removed") in ops, ops
-        renamed = [r for r in s.change_report("records")
+        renamed = [r for r in s.change_report(REPORT_FORMAT.RECORDS)
                    if r["target"] == "B" and r["op"] == "renamed"]
         assert renamed[0]["from"] == "A" and renamed[0]["to"] == "B", renamed
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "~ B [renamed from A]" in text, text
         assert "- B [removed]" in text, text
 
@@ -2941,7 +2958,7 @@ class TestReviewFindings3:
         b = self._rec(s, "B")
         assert b[0]["op"] == "renamed" and b[0]["from"] == "A", b
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "~ B [renamed from A]" in text, text
         assert "+ C [new class]" in text, text
         assert "renamed from A]" in text and text.count("renamed from A") == 1, text
@@ -2960,7 +2977,7 @@ class TestReviewFindings3:
         assert ("C", "added") in ops, ops        # net-new
         assert ("C", "renamed") not in ops, ops  # never renamed-from-baseline
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "- B [removed]" in text, text
         assert "+ C [new class]" in text, text
 
@@ -2981,7 +2998,7 @@ class TestReviewFindings3:
         old = self._rec(s, "K.x_old")
         assert old[0]["from"] == "x", old
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "~ x_old: x -> x_old [renamed]" in text, text
         assert "+ x_new [added]" in text, text
 
@@ -3000,7 +3017,7 @@ class TestReviewFindings3:
         assert ("A", "subclass_created") in ops, ops
         assert ("A", "renamed") not in ops, ops
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "- A [removed]" in text, text
         assert "[new subclass of Parent]" in text, text
 
@@ -3024,7 +3041,7 @@ class TestReviewFindings3:
         # The property modification resolves onto the final entity C.p.
         assert ("C.p", "modified") in ops, ops
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "~ C [renamed from A]" in text, text
         assert "~ p: isOptional: true -> false" in text, text
 
@@ -3044,7 +3061,7 @@ class TestReviewFindings3:
         # The modification merged into the single renamed record.
         assert r[0].get("fields"), r
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "~ r: p -> r [renamed]" in text, text
         assert "isOptional: true -> false" in text, text
 
@@ -3058,8 +3075,8 @@ class TestReviewFindings3:
         s = self._from(s)
         s.update_class("A", new_name="B")
         s.update_class("B", new_name="A")
-        assert s.change_report("records") == [], s.change_report("records")
-        assert s.change_report("text") == "", s.change_report("text")
+        assert s.change_report(REPORT_FORMAT.RECORDS) == [], s.change_report(REPORT_FORMAT.RECORDS)
+        assert s.change_report(REPORT_FORMAT.TEXT) == "", s.change_report(REPORT_FORMAT.TEXT)
 
     def test_contract4_property_round_trip_no_entry_both_formats(self):
         s = self._empty()
@@ -3068,8 +3085,8 @@ class TestReviewFindings3:
         s = self._from(s)
         s.rename_property("K", "p", "q")
         s.rename_property("K", "q", "p")
-        assert s.change_report("records") == [], s.change_report("records")
-        assert s.change_report("text") == "", s.change_report("text")
+        assert s.change_report(REPORT_FORMAT.RECORDS) == [], s.change_report(REPORT_FORMAT.RECORDS)
+        assert s.change_report(REPORT_FORMAT.TEXT) == "", s.change_report(REPORT_FORMAT.TEXT)
 
     # ==================================================================
     # CONTRACT 5 — apply_to_subclasses (intent-driven, op-time set, transitive,
@@ -3093,7 +3110,7 @@ class TestReviewFindings3:
         applied = parent[0].get("detail", {}).get("applied_to_subclasses", [])
         assert set(applied) == {"Dog", "Puppy"}, applied   # transitive
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "applied to subclasses:" in text, text
         assert "Dog" in text and "Puppy" in text, text
 
@@ -3119,7 +3136,7 @@ class TestReviewFindings3:
         assert len(parent) == 1, parent
         assert "Dog" in parent[0].get("detail", {}).get("applied_to_subclasses", []), parent
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert 'applied to subclasses: ["Dog"]' in text, text
         TestReviewFindings2()._assert_formats_agree(s)
 
@@ -3154,7 +3171,7 @@ class TestReviewFindings3:
         assert "Dog" in applied, applied
         assert "Cat" not in applied, applied   # not claimed while also removed
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "- Cat [removed]" in text, text
         assert "Cat" not in text.split("applied to subclasses:")[1].split("\n")[0], text
         TestReviewFindings2()._assert_formats_agree(s)
@@ -3164,7 +3181,7 @@ class TestReviewFindings3:
         s.create_property("Animal", "tail", DATATYPE.TEXT)  # no apply_to_subclasses
         parent = self._rec(s, "Animal.tail")
         assert "applied_to_subclasses" not in parent[0].get("detail", {}), parent
-        assert "applied to subclasses:" not in s.change_report("text")
+        assert "applied to subclasses:" not in s.change_report(REPORT_FORMAT.TEXT)
 
     # ==================================================================
     # CONTRACT 6 — reorder collapse (net), no __order__ sentinel leak
@@ -3180,14 +3197,14 @@ class TestReviewFindings3:
         s.assign_property_orders({"K": ["label", "c", "b", "a"]})
         s.assign_property_orders({"K": ["label", "b", "c", "a"]})
 
-        reordered = [r for r in s.change_report("records")
+        reordered = [r for r in s.change_report(REPORT_FORMAT.RECORDS)
                      if r["target"] == "K" and r["op"] == "reordered"]
         assert len(reordered) == 1, reordered
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert text.count("[reordered]") == 1, text
         assert "__order__" not in text, text
-        assert all("__order__" not in r["target"] for r in s.change_report("records"))
+        assert all("__order__" not in r["target"] for r in s.change_report(REPORT_FORMAT.RECORDS))
 
     def test_contract6_reorder_net_to_baseline_emits_none_both_formats(self):
         s = self._empty()
@@ -3198,8 +3215,8 @@ class TestReviewFindings3:
         # Net back to baseline order (label, a, b) — list all so none are appended.
         s.assign_property_orders({"K": ["label", "b", "a"]})
         s.assign_property_orders({"K": ["label", "a", "b"]})
-        assert s.change_report("records") == [], s.change_report("records")
-        assert s.change_report("text") == "", s.change_report("text")
+        assert s.change_report(REPORT_FORMAT.RECORDS) == [], s.change_report(REPORT_FORMAT.RECORDS)
+        assert s.change_report(REPORT_FORMAT.TEXT) == "", s.change_report(REPORT_FORMAT.TEXT)
 
     def test_contract6_untracked_reorder_no_sentinel_leak_both_formats(self):
         """A reorder done via to_dict (no op-log entry) must not leak __order__."""
@@ -3210,9 +3227,9 @@ class TestReviewFindings3:
         s = self._from(s)
         props = s.to_dict()["classes"][0]["properties"]
         props.reverse()   # untracked reorder
-        recs = s.change_report("records")
+        recs = s.change_report(REPORT_FORMAT.RECORDS)
         assert all("__order__" not in r["target"] for r in recs), recs
-        assert "__order__" not in s.change_report("text")
+        assert "__order__" not in s.change_report(REPORT_FORMAT.TEXT)
 
     # ==================================================================
     # CONTRACT 7 — cross-format invariant, PROVEN NON-VACUOUS
@@ -3287,7 +3304,7 @@ class TestReviewFindings3:
                                   apply_to_subclasses=True)
             start = time.perf_counter()
             for _ in range(3):
-                s.change_report("records")
+                s.change_report(REPORT_FORMAT.RECORDS)
             return time.perf_counter() - start
 
         small = build_and_time(50)
@@ -3315,7 +3332,7 @@ class TestReviewFindings3:
                                   apply_to_subclasses=True)
             start = time.perf_counter()
             for _ in range(3):
-                s.change_report("records")
+                s.change_report(REPORT_FORMAT.RECORDS)
             return time.perf_counter() - start
 
         small = build_and_time(100)
@@ -3336,8 +3353,8 @@ class TestReviewFindings3:
         # Untracked to_dict edit producing a name-less class dict.
         s.to_dict()["classes"].append({"type": "Class", "properties": []})
         # Must not KeyError; degrades gracefully (name-less entry skipped).
-        recs = s.change_report("records")
-        text = s.change_report("text")
+        recs = s.change_report(REPORT_FORMAT.RECORDS)
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert isinstance(recs, list) and isinstance(text, str)
 
     def test_contract10_metadata_allowlist_excludes_server_keys(self):
@@ -3347,7 +3364,7 @@ class TestReviewFindings3:
         d = s.to_dict()
         d["guid"] = "server-assigned-guid"      # server-internal
         d["@context"] = {"x": "y"}
-        recs = s.change_report("records")
+        recs = s.change_report(REPORT_FORMAT.RECORDS)
         targets = {r["target"] for r in recs}
         assert "schema.guid" not in targets, recs
         assert "schema.@context" not in targets, recs
@@ -3363,7 +3380,7 @@ class TestReviewFindings3:
             s.delete_class("Zeta")
             s.update_class("Alpha", new_name="Aleph")
             s.create_property("Aleph", "x", DATATYPE.TEXT, apply_to_subclasses=True)
-            return s.change_report("text")
+            return s.change_report(REPORT_FORMAT.TEXT)
         a, b = run(), run()
         assert a == b, f"non-deterministic:\n{a}\n---\n{b}"
 
@@ -3520,7 +3537,7 @@ class TestReviewFindings3:
         desc = "An animal.\nUsed for: tracking pets -> owners"
         s.assign_class_description("Animal", desc)
 
-        recs = s.change_report("records")
+        recs = s.change_report(REPORT_FORMAT.RECORDS)
         animal = next(r for r in recs if r["target"] == "Animal")
         assert animal["op"] == "modified", animal
         field = next(f for f in animal["fields"] if f["field"] == "description")
@@ -3556,7 +3573,7 @@ class TestReviewFindings3:
         desc = "An animal.\nUsed for: tracking pets -> owners"
         s.assign_class_description("Animal", desc)
 
-        records = s.change_report("records")
+        records = s.change_report(REPORT_FORMAT.RECORDS)
         animal = next(r for r in records if r["target"] == "Animal")
         after = next(f["after"] for f in animal["fields"]
                      if f["field"] == "description")
@@ -3566,7 +3583,7 @@ class TestReviewFindings3:
         # recover exactly what records carries.  Today the newline spills the
         # remainder onto a phantom line, so the `description:` line carries only
         # the first physical line — this assertion FAILS (hence xfail).
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         desc_line = next(ln.strip() for ln in text.splitlines()
                          if ln.strip().startswith("description:"))
         rendered_value = desc_line.split("->", 1)[1].strip()
@@ -3590,7 +3607,7 @@ class TestReviewFindings3:
         s.create_subclass("Dog", "d", "Animal")
         s.create_property("Dog", "breed", DATATYPE.TEXT)   # AFTER create_subclass
 
-        recs = s.change_report("records")
+        recs = s.change_report(REPORT_FORMAT.RECORDS)
         dog = next(r for r in recs if r["target"] == "Dog")
         assert dog["op"] == "subclass_created", dog
         # Only the inherited-at-creation property (label) is counted; breed is NOT.
@@ -3599,7 +3616,7 @@ class TestReviewFindings3:
         breed = [r for r in recs if r["target"] == "Dog.breed"]
         assert len(breed) == 1 and breed[0]["op"] == "added", recs
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "+ Dog [new subclass of Animal] (+1 inherited)" in text, text
         assert "inherited count: 1" in text, text
         assert "+ breed [added]" in text, text
@@ -3618,14 +3635,14 @@ class TestReviewFindings3:
         s.create_property("Dog", "breed", DATATYPE.TEXT)
         s.create_property("Dog", "weight", DATATYPE.INTEGER)
 
-        recs = s.change_report("records")
+        recs = s.change_report(REPORT_FORMAT.RECORDS)
         dog = next(r for r in recs if r["target"] == "Dog")
         assert dog["detail"]["inherited"] == 2, dog   # NOT 4
         added = {r["target"] for r in recs if r["op"] == "added"
                  and r["target"].startswith("Dog.")}
         assert added == {"Dog.breed", "Dog.weight"}, recs
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "(+2 inherited)" in text, text
         assert "inherited count: 2" in text, text
 
@@ -3640,12 +3657,12 @@ class TestReviewFindings3:
         s = self._from(s)
         s.create_subclass("Dog", "d", "Animal")   # inherits label + age = 2
 
-        recs = s.change_report("records")
+        recs = s.change_report(REPORT_FORMAT.RECORDS)
         dog = next(r for r in recs if r["target"] == "Dog")
         assert dog["detail"]["inherited"] == 2, dog
         assert not [r for r in recs if r["target"].startswith("Dog.")], recs
 
-        text = s.change_report("text")
+        text = s.change_report(REPORT_FORMAT.TEXT)
         assert "(+2 inherited)" in text, text
         assert "+ " not in text.split("\n", 2)[-1].replace(
             "+ Dog [new subclass of Animal] (+2 inherited)", ""
@@ -3663,7 +3680,7 @@ class TestReviewFindings3:
         s.create_subclass("Dog", "d", "Animal")   # inherits label + age = 2
         s.delete_property("Dog", "age")           # drop one inherited prop
 
-        recs = s.change_report("records")
+        recs = s.change_report(REPORT_FORMAT.RECORDS)
         dog = next(r for r in recs if r["target"] == "Dog")
         assert dog["detail"]["inherited"] == 1, dog   # only label survives
 
@@ -3751,7 +3768,7 @@ class TestReviewFindings3:
         # Atomicity: nothing was written — not even to A or B (which precede C).
         assert s.to_dict() == before, "partial write on mid-cascade conflict"
         # The op recorded nothing (it raised before _record).
-        assert s.change_report("records") == [], s.change_report("records")
+        assert s.change_report(REPORT_FORMAT.RECORDS) == [], s.change_report(REPORT_FORMAT.RECORDS)
 
     def test_contract13_update_cascade_atomic_on_missing_descendant_prop(self):
         """A mid-cascade PropertyNotFoundError on update must leave the schema
@@ -3788,7 +3805,7 @@ class TestReviewFindings3:
                                   apply_to_subclasses=True)
             start = time.perf_counter()
             for _ in range(3):
-                s.change_report("records")
+                s.change_report(REPORT_FORMAT.RECORDS)
             return time.perf_counter() - start
 
         small = build_and_time(20)
