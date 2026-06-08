@@ -78,19 +78,18 @@ _PROPERTY_FIELDS: tuple[str, ...] = (
 class Change:
     """Represents a single net-effect change detected by the structural diff.
 
-    Attributes:
-        target: The entity affected, e.g. ``"metadata"``, ``"ClassName"``,
-            or ``"ClassName.propName"``.
-        kind: Broad category: ``"metadata"``, ``"class"``, or ``"property"``.
-        op: The operation: ``"added"``, ``"removed"``, or ``"modified"``.
-        from_: Before-value for scalar changes (``op="modified"`` on metadata).
-        to: After-value for scalar changes.
-        fields: For ``op="modified"`` class/property changes — an ordered list
-            of ``{"field": str, "before": Any, "after": Any}`` dicts, one per
-            changed field.  Only changed fields are included.
-        detail: Optional free-form dict for supplementary annotations.
-            Phase 5 uses ``{"reorder_candidate": True}`` to flag property
-            sequences whose *set* is unchanged but whose *order* differs.
+    :ivar target: The entity affected, e.g. ``"metadata"``, ``"ClassName"``,
+        or ``"ClassName.propName"``.
+    :ivar kind: Broad category: ``"metadata"``, ``"class"``, or ``"property"``.
+    :ivar op: The operation: ``"added"``, ``"removed"``, or ``"modified"``.
+    :ivar from\\_: Before-value for scalar changes (``op="modified"`` on metadata).
+    :ivar to: After-value for scalar changes.
+    :ivar fields: For ``op="modified"`` class/property changes — an ordered
+        list of ``{"field": str, "before": Any, "after": Any}`` dicts, one per
+        changed field.  Only changed fields are included.
+    :ivar detail: Optional free-form dict for supplementary annotations.
+        Phase 5 uses ``{"reorder_candidate": True}`` to flag property sequences
+        whose *set* is unchanged but whose *order* differs.
     """
 
     target: str
@@ -149,32 +148,31 @@ class RenameMap:
     identity has no baseline name => it is *added*, never matched to the
     original baseline entity).
 
-    Attributes:
-        classes: ``{baseline_class_name -> current_class_name}`` for every
-            class that survived to a *different* current name (genuine rename).
-            A class born after baseline (no baseline name) never appears here.
-        properties: ``{(baseline_class_name, baseline_prop_name) ->
-            current_prop_name}`` for every property that survived to a different
-            current name.  The key's class component is the owning class's
-            *baseline* name, so a property rename stays correctly scoped even
-            when its owning class was itself renamed.
-        entry_class_resolution: Per op-log position, the final current name of
-            whichever class bore that entry's call-time ``class_name`` at the
-            entry's position (``None`` if the class did not survive, or the
-            entry carries no class name).
-        entry_prop_resolution: Per op-log position, the
-            ``(final_class_name, final_prop_name)`` of the property the entry's
-            call-time ``(class_name, prop_name)`` referred to at its position
-            (``None`` if absent or not surviving).
-        class_fate: ``{baseline_class_name -> Optional[final_current_name]}`` for
-            EVERY class that existed at baseline.  ``None`` means the class's
-            identity was ended (deleted) during the session, so a current class
-            of the same name is a *different* identity (recycle), not this one.
-            This is what lets the diff match by identity and never swallow a
-            destructive delete behind a recycled name.
-        prop_fate: ``{(baseline_class_name, baseline_prop_name) ->
-            Optional[final_current_name]}`` for every property that existed at
-            baseline; ``None`` means its identity was deleted.
+    :ivar classes: ``{baseline_class_name -> current_class_name}`` for every
+        class that survived to a *different* current name (genuine rename).
+        A class born after baseline (no baseline name) never appears here.
+    :ivar properties: ``{(baseline_class_name, baseline_prop_name) -> current_prop_name}``
+        for every property that survived to a different current name.  The key's
+        class component is the owning class's *baseline* name, so a property
+        rename stays correctly scoped even when its owning class was itself
+        renamed.
+    :ivar entry_class_resolution: Per op-log position, the final current name of
+        whichever class bore that entry's call-time ``class_name`` at the
+        entry's position (``None`` if the class did not survive, or the entry
+        carries no class name).
+    :ivar entry_prop_resolution: Per op-log position, the
+        ``(final_class_name, final_prop_name)`` of the property the entry's
+        call-time ``(class_name, prop_name)`` referred to at its position
+        (``None`` if absent or not surviving).
+    :ivar class_fate: ``{baseline_class_name -> Optional[final_current_name]}``
+        for EVERY class that existed at baseline.  ``None`` means the class's
+        identity was ended (deleted) during the session, so a current class of
+        the same name is a *different* identity (recycle), not this one.  This
+        is what lets the diff match by identity and never swallow a destructive
+        delete behind a recycled name.
+    :ivar prop_fate: ``{(baseline_class_name, baseline_prop_name) -> Optional[final_current_name]}``
+        for every property that existed at baseline; ``None`` means its identity
+        was deleted.
     """
 
     classes: dict[str, str]
@@ -1746,17 +1744,18 @@ class TextChangeRenderer(ChangeRenderer):
         (``applied_to_subclasses``, ``label_property``, ``order``, ``parent``,
         ``inherited``) each render on their own continuation line.
 
-        List/string values are JSON-encoded (not naively ``", "``-joined) so a
-        value containing a delimiter (e.g. a class name with ``", "``) round-trips
-        unambiguously and cannot fool the invariant's text-side parser.  The
-        ``order``/``parent``/``inherited`` lines are continuation detail emitted
-        *in addition to* the human-readable header summary (which keeps the
-        familiar ``[new subclass of P] (+N inherited)`` / ``[reordered]`` shape),
-        so the text contract gains content without losing its existing form.
+        List/string values are JSON-encoded (not naively joined on a comma)
+        so a value containing the delimiter (e.g. a class name with a comma)
+        round-trips unambiguously and cannot fool the invariant's text-side
+        parser.  The ``order``/``parent``/``inherited`` lines are continuation
+        detail emitted *in addition to* the human-readable header summary (which
+        keeps the familiar ``[new subclass of P] (+N inherited)`` /
+        ``[reordered]`` shape), so the text contract gains content without
+        losing its existing form.
 
         :param ch: The change whose detail to render.
-        :param indent: Leading whitespace (``"  "`` class-level, ``"    "``
-            property-level) so the line nests under its owning block.
+        :param indent: Leading whitespace (two spaces at class level, four at
+            property level) so the line nests under its owning block.
         :returns: Zero or more annotation lines.
         """
         detail = ch.detail or {}
