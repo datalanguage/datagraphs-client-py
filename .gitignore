@@ -16,4 +16,5 @@ Thumbs.db
 
 # pydoctor build output
 docs/_build/
+docs/api/
 
