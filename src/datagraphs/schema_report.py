@@ -14,9 +14,10 @@ pipeline detail.
 """
 
 import json
+from abc import ABC, abstractmethod
 from itertools import groupby
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -1325,11 +1326,12 @@ def _annotate(
 # _sort_changes(changes) -> list[Change]
 #     Deterministic ordering: (kind_rank, class_name, op_rank, target)
 #
-# _render_text(changes) -> str
-#     Plain-text changelog with header and per-class grouping.
-#
-# _render_records(changes) -> list[dict]
-#     Structured record dicts per the contract table; absent keys omitted.
+# ChangeRenderer (strategy ABC) -> render(changes) -> str | list[dict]
+#     TextChangeRenderer    — plain-text changelog with header and per-class
+#                             grouping; per-op line shaping via dispatch tables.
+#     RecordChangeRenderer  — structured record dicts per the contract table;
+#                             absent keys omitted.
+#     build_change_report selects a renderer from the _RENDERERS registry by fmt.
 # ---------------------------------------------------------------------------
 
 #: kind_rank: metadata(0) < class(1) < property(2)
@@ -1438,8 +1440,100 @@ def _bool_str(v: Any) -> str:
     return str(v) if v is not None else "null"
 
 
-def _render_text(changes: list["Change"]) -> str:
-    """Render an ordered list of :class:`Change` instances as a plain-text changelog.
+def _format_field(f: dict) -> str:
+    """Render one field change as ``'field: before -> after'`` (booleans lowercased).
+
+    The shared atom behind every field-change line: class-level field lines, the
+    ``[renamed]`` property tail, and the ``modified`` property suffix all compose
+    this single rendering — they differ only in the surrounding prefix and join,
+    not in how an individual field is shown.
+
+    :param f: A ``{"field": str, "before": Any, "after": Any}`` change entry.
+    :returns: The ``"field: before -> after"`` rendering.
+    """
+    return f"{f['field']}: {_bool_str(f.get('before'))} -> {_bool_str(f.get('after'))}"
+
+
+class ChangeRenderer(ABC):
+    """Strategy that renders an ordered list of :class:`Change` instances.
+
+    A renderer is the presentation half of the report pipeline: the structural
+    diff and semantic annotation upstream are format-agnostic, and each concrete
+    renderer turns the single sorted :class:`Change` sequence into one output
+    format.  :func:`build_change_report` selects the renderer for the requested
+    ``fmt`` and is the only caller; renderers hold no state between calls.
+
+    Return type intentionally varies by format (``str`` for text, ``list[dict]``
+    for records) — the contract is "produce the report in my format", and each
+    concrete subclass narrows the return type in its own docstring.
+    """
+
+    @abstractmethod
+    def render(self, changes: list["Change"]) -> "str | list[dict]":
+        """Render *changes* (already sorted) into this renderer's output format."""
+        raise NotImplementedError
+
+
+class RecordChangeRenderer(ChangeRenderer):
+    """Render Changes as structured record dicts (the ``records`` format).
+
+    Each dict follows the Data/Interface Contract key table:
+
+    * ``target`` (always present): dotted path — ``"ClassName"`` or
+      ``"ClassName.propName"`` (current name).
+    * ``kind`` (always present): ``"class"``, ``"property"``, or ``"metadata"``.
+    * ``op`` (always present): one of ``added``, ``removed``, ``modified``,
+      ``renamed``, ``reordered``, ``subclass_created``.
+    * ``from`` (renames only): previous name (mapped from :attr:`Change.from_`).
+    * ``to`` (renames only): new name (mapped from :attr:`Change.to`).
+    * ``fields`` (modified/renamed with field changes only): list of
+      ``{"field": str, "before": Any, "after": Any}`` entries.
+    * ``detail`` (compound/label/reorder only): the annotation dict.
+
+    Keys are **omitted** (not ``None``) when they do not apply to a given entry,
+    keeping records compact and stable.  This is a flat one-record-per-Change
+    mapping in the supplied sorted order — identical ordering to the text format.
+    """
+
+    #: Internal-only ``detail`` keys that are pipeline artefacts, not part of the
+    #: published records contract, and so are stripped from emitted records.
+    _INTERNAL_DETAIL_KEYS: frozenset[str] = frozenset(
+        {"reorder_candidate", "before_order", "after_order"}
+    )
+
+    def render(self, changes: list["Change"]) -> list[dict]:
+        """Render *changes* as a deterministic list of record dicts.
+
+        :param changes: Ordered :class:`Change` instances (already sorted).
+        :returns: Deterministic list of record dicts.
+        """
+        return [self._to_record(ch) for ch in changes]
+
+    def _to_record(self, ch: "Change") -> dict:
+        """Convert a single Change to its record dict, omitting inapplicable keys."""
+        rec: dict = {
+            "target": ch.target,
+            "kind": ch.kind,
+            "op": ch.op,
+        }
+        if ch.from_ is not None:
+            rec["from"] = ch.from_
+        if ch.to is not None:
+            rec["to"] = ch.to
+        if ch.fields is not None:
+            rec["fields"] = ch.fields
+        if ch.detail is not None:
+            clean = {
+                k: v for k, v in ch.detail.items()
+                if k not in self._INTERNAL_DETAIL_KEYS
+            }
+            if clean:
+                rec["detail"] = clean
+        return rec
+
+
+class TextChangeRenderer(ChangeRenderer):
+    """Render Changes as a human-readable plain-text changelog (the ``text`` format).
 
     Layout::
 
@@ -1460,75 +1554,187 @@ def _render_text(changes: list["Change"]) -> str:
     *N* counts only the top-level class/metadata entries (not individual
     property-level lines).
 
-    :param changes: Ordered :class:`Change` instances (already sorted).
-    :returns: Deterministic plain-text changelog string.
+    Unlike the flat records format, text output is **hierarchical**: property
+    changes nest under their owning class's block.  :meth:`render` owns that
+    grouping/emission orchestration; per-op line shaping is delegated through
+    the :attr:`_CLASS_HEADERS` / :attr:`_PROP_LINES` dispatch tables so that
+    adding a new op is one table entry rather than another conditional branch.
+
+    Every method is side-effect-free — it *returns* its lines rather than
+    mutating shared state — so each renders in isolation and composes cleanly.
     """
-    lines: list[str] = []
 
-    # Group property changes by owning class for inline rendering under class blocks.
-    # We'll iterate in sorted order and collect property lines as we encounter them.
-    # We need to bucket property changes by class_name so they render inline.
-    prop_changes_by_class: dict[str, list["Change"]] = {}
-    for ch in changes:
-        if ch.kind == "property":
-            cls = ch.target.split(".")[0]
-            prop_changes_by_class.setdefault(cls, []).append(ch)
+    def __init__(self) -> None:
+        # Per-op dispatch tables (built once per instance from bound methods /
+        # closures).  Keyed on ``Change.op``; the ``modified`` builder is the
+        # fallback for any op not explicitly listed, preserving the old if/elif
+        # ladder's terminal ``else`` branch.
+        self._CLASS_HEADERS: dict[str, Callable[["Change"], str]] = {
+            "added": lambda ch: f"+ {ch.target} [new class]",
+            "subclass_created": self._subclass_created_header,
+            "removed": lambda ch: f"- {ch.target} [removed]",
+            "reordered": lambda ch: f"~ {ch.target} [reordered]",
+            "renamed": lambda ch: f"~ {ch.target} [renamed from {ch.from_ or '?'}]",
+            "modified": lambda ch: f"~ {ch.target} [modified]",
+        }
+        self._PROP_LINES: dict[str, Callable[["Change", str], str]] = {
+            "added": lambda pch, name: f"  + {name} [added]",
+            "removed": lambda pch, name: f"  - {name} [removed]",
+            "renamed": self._renamed_prop_line,
+            "modified": self._modified_prop_line,
+        }
 
-    # Track which class names we've already emitted a class-level block for,
-    # so we can attach orphan property changes (adds/removes/modifies on
-    # unchanged classes) without a duplicate header.
-    emitted_class_blocks: set[str] = set()
+    def render(self, changes: list["Change"]) -> str:
+        """Render *changes* as a deterministic plain-text changelog string.
 
-    # Count top-level entries for the header: metadata changes + class changes
-    # (each class block is one top-level entry; property-only changed classes
-    # also count as one entry).
-    #
-    # To stay predictable: one entry per (kind=="metadata") change plus one
-    # entry per distinct owning class that has any change.
-    classes_with_changes: set[str] = set()
-    metadata_count = 0
-    for ch in changes:
-        if ch.kind == "metadata":
-            metadata_count += 1
-        elif ch.kind == "class":
-            classes_with_changes.add(ch.target)
-        elif ch.kind == "property":
-            classes_with_changes.add(ch.target.split(".")[0])
-    top_level_n = metadata_count + len(classes_with_changes)
+        :param changes: Ordered :class:`Change` instances (already sorted).
+        :returns: Deterministic plain-text changelog string.
+        """
+        # Bucket changes by owning class ONCE so each class's full block (its
+        # class-level Changes plus its nested property lines) renders inline on
+        # first encounter, in the supplied sorted order.
+        class_changes: dict[str, list["Change"]] = {}
+        prop_changes: dict[str, list["Change"]] = {}
+        for ch in changes:
+            if ch.kind == "class":
+                class_changes.setdefault(ch.target, []).append(ch)
+            elif ch.kind == "property":
+                prop_changes.setdefault(self._owning_class(ch), []).append(ch)
 
-    if top_level_n > 0:
-        lines.append(f"Schema changes ({top_level_n}):")
+        lines: list[str] = []
+        header = self._summary_header(changes)
+        if header is not None:
+            lines.append(header)
 
-    def _format_class_header(ch: "Change") -> str:
-        """Build the single class-level header line for class Changes."""
-        if ch.op == "added":
-            return f"+ {ch.target} [new class]"
-        if ch.op == "subclass_created":
-            parent = (ch.detail or {}).get("parent", "?")
-            inherited = (ch.detail or {}).get("inherited", 0)
-            return f"+ {ch.target} [new subclass of {parent}] (+{inherited} inherited)"
-        if ch.op == "removed":
-            return f"- {ch.target} [removed]"
-        if ch.op == "reordered":
+        emitted: set[str] = set()
+        for ch in changes:
+            if ch.kind == "metadata":
+                lines.append(self._metadata_line(ch))
+                continue
+            cls_name = ch.target if ch.kind == "class" else self._owning_class(ch)
+            if cls_name not in emitted:
+                emitted.add(cls_name)
+                lines.extend(self._class_block(
+                    cls_name,
+                    class_changes.get(cls_name, []),
+                    prop_changes.get(cls_name, []),
+                ))
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _owning_class(ch: "Change") -> str:
+        """The class name owning a property Change (``"Class"`` from ``"Class.prop"``)."""
+        return ch.target.split(".")[0]
+
+    @staticmethod
+    def _summary_header(changes: list["Change"]) -> Optional[str]:
+        """The ``Schema changes (N):`` header, or ``None`` when there is nothing.
+
+        *N* counts one entry per metadata change plus one per distinct owning
+        class that has any change (property-only changed classes count once);
+        individual property lines are not counted.
+        """
+        classes_with_changes: set[str] = set()
+        metadata_count = 0
+        for ch in changes:
+            if ch.kind == "metadata":
+                metadata_count += 1
+            elif ch.kind == "class":
+                classes_with_changes.add(ch.target)
+            elif ch.kind == "property":
+                classes_with_changes.add(ch.target.split(".")[0])
+        top_level_n = metadata_count + len(classes_with_changes)
+        return f"Schema changes ({top_level_n}):" if top_level_n > 0 else None
+
+    @staticmethod
+    def _metadata_line(ch: "Change") -> str:
+        """The single ``~ target: before -> after`` line for a metadata Change."""
+        return f"~ {ch.target}: {_bool_str(ch.from_)} -> {_bool_str(ch.to)}"
+
+    def _class_block(
+        self,
+        cls_name: str,
+        class_chs: list["Change"],
+        prop_chs: list["Change"],
+    ) -> list[str]:
+        """Render ALL class-level Changes for *cls_name*, then its property lines.
+
+        FIX VR-B1: a class may legitimately carry MORE THAN ONE class-level
+        Change (a recycled name yields renamed + removed; a concurrent reorder
+        yields modified/renamed + reordered).  Every such Change must render —
+        the renderer must not silently drop a destructive ``removed`` or a
+        ``reordered`` after the first block, or the text output would lie while
+        records stay correct.  A class with only property-level changes gets a
+        synthesised ``~`` header.
+        """
+        lines: list[str] = []
+        if class_chs:
+            for class_ch in class_chs:
+                lines.extend(self._one_class_change(class_ch))
+        else:
+            lines.append(f"~ {cls_name} [modified]")
+        for pch in prop_chs:
+            lines.extend(self._prop_change(pch))
+        return lines
+
+    def _one_class_change(self, ch: "Change") -> list[str]:
+        """Header line + field/reorder/detail continuation lines for one class Change."""
+        lines = [self._class_header(ch)]
+        if ch.op in ("modified", "renamed"):
+            lines.extend(f"  {_format_field(f)}" for f in (ch.fields or []))
+        elif ch.op == "reordered":
             order = (ch.detail or {}).get("order", [])
-            return f"~ {ch.target} [reordered]"
-        if ch.op == "renamed":
-            from_name = ch.from_ or "?"
-            suffix = f" [renamed from {from_name}]"
-            return f"~ {ch.target}{suffix}"
-        # modified
-        return f"~ {ch.target} [modified]"
+            lines.append(f"  properties reordered: {order}")
+        lines.extend(self._detail_lines(ch, indent="  "))
+        return lines
 
-    def _render_class_fields(ch: "Change") -> list[str]:
-        """Indented field-change lines for a modified/renamed class Change."""
-        field_lines = []
-        for f in (ch.fields or []):
-            before_v = _bool_str(f.get("before"))
-            after_v = _bool_str(f.get("after"))
-            field_lines.append(f"  {f['field']}: {before_v} -> {after_v}")
-        return field_lines
+    def _class_header(self, ch: "Change") -> str:
+        """Build the single class-level header line, dispatched on ``ch.op``."""
+        builder = self._CLASS_HEADERS.get(ch.op, self._CLASS_HEADERS["modified"])
+        return builder(ch)
 
-    def _render_detail_lines(ch: "Change", indent: str) -> list[str]:
+    @staticmethod
+    def _subclass_created_header(ch: "Change") -> str:
+        detail = ch.detail or {}
+        parent = detail.get("parent", "?")
+        inherited = detail.get("inherited", 0)
+        return f"+ {ch.target} [new subclass of {parent}] (+{inherited} inherited)"
+
+    def _prop_change(self, pch: "Change") -> list[str]:
+        """Property change line plus any annotation continuation lines.
+
+        A ``modified`` property carrying neither field changes nor renderable
+        detail is content-free noise (it would print ``~ prop`` asserting a
+        change while showing none) and is skipped (B2).  The corresponding
+        ``records`` entry is likewise contentless, so both formats agree.
+        """
+        detail_lines = self._detail_lines(pch, indent="    ")
+        if pch.op == "modified" and not pch.fields and not detail_lines:
+            return []
+        return [self._prop_line(pch), *detail_lines]
+
+    def _prop_line(self, pch: "Change") -> str:
+        """Single indented property-change line, dispatched on ``pch.op``."""
+        prop_name = pch.target.split(".", 1)[1] if "." in pch.target else pch.target
+        builder = self._PROP_LINES.get(pch.op, self._PROP_LINES["modified"])
+        return builder(pch, prop_name)
+
+    @staticmethod
+    def _renamed_prop_line(pch: "Change", prop_name: str) -> str:
+        parts = [f"  ~ {prop_name}: {pch.from_} -> {pch.to} [renamed]"]
+        parts.extend(f"; {_format_field(f)}" for f in (pch.fields or []))
+        return "".join(parts)
+
+    @staticmethod
+    def _modified_prop_line(pch: "Change", prop_name: str) -> str:
+        field_parts = [_format_field(f) for f in (pch.fields or [])]
+        if field_parts:
+            return f"  ~ {prop_name}: " + "; ".join(field_parts)
+        return f"  ~ {prop_name}"
+
+    @staticmethod
+    def _detail_lines(ch: "Change", indent: str) -> list[str]:
         """Indented continuation lines for an entry's semantic annotations.
 
         The default (``text``) output MUST surface **every** detail dimension
@@ -1555,172 +1761,28 @@ def _render_text(changes: list["Change"]) -> str:
         out: list[str] = []
         applied = detail.get("applied_to_subclasses")
         if applied:
-            out.append(
-                f"{indent}applied to subclasses: {json.dumps(applied)}"
-            )
+            out.append(f"{indent}applied to subclasses: {json.dumps(applied)}")
         if detail.get("label_property") is not None:
             out.append(
                 f"{indent}designated label property: "
                 f"{json.dumps(detail['label_property'])}"
             )
         if detail.get("order") is not None:
-            out.append(
-                f"{indent}reorder sequence: {json.dumps(detail['order'])}"
-            )
+            out.append(f"{indent}reorder sequence: {json.dumps(detail['order'])}")
         if detail.get("parent") is not None:
-            out.append(
-                f"{indent}subclass of: {json.dumps(detail['parent'])}"
-            )
+            out.append(f"{indent}subclass of: {json.dumps(detail['parent'])}")
         if detail.get("inherited") is not None:
-            out.append(
-                f"{indent}inherited count: {json.dumps(detail['inherited'])}"
-            )
+            out.append(f"{indent}inherited count: {json.dumps(detail['inherited'])}")
         return out
 
-    def _render_prop_line(pch: "Change") -> str:
-        """Single indented property-change line (without detail continuations)."""
-        prop_name = pch.target.split(".", 1)[1] if "." in pch.target else pch.target
-        if pch.op == "added":
-            return f"  + {prop_name} [added]"
-        if pch.op == "removed":
-            return f"  - {prop_name} [removed]"
-        if pch.op == "renamed":
-            parts = [f"  ~ {prop_name}: {pch.from_} -> {pch.to} [renamed]"]
-            for f in (pch.fields or []):
-                before_v = _bool_str(f.get("before"))
-                after_v = _bool_str(f.get("after"))
-                parts.append(f"; {f['field']}: {before_v} -> {after_v}")
-            return "".join(parts)
-        # modified
-        parts: list[str] = [f"  ~ {prop_name}"]
-        field_parts = []
-        for f in (pch.fields or []):
-            before_v = _bool_str(f.get("before"))
-            after_v = _bool_str(f.get("after"))
-            field_parts.append(f"{f['field']}: {before_v} -> {after_v}")
-        if field_parts:
-            parts.append(": " + "; ".join(field_parts))
-        return "".join(parts)
 
-    def _emit_prop_change(pch: "Change") -> None:
-        """Emit a property change line plus any annotation continuation lines.
-
-        A ``modified`` property carrying neither field changes nor renderable
-        detail is content-free noise (it would print ``~ prop`` asserting a
-        change while showing none) and is skipped (B2).  The corresponding
-        ``records`` entry is likewise contentless, so both formats agree.
-        """
-        detail_lines = _render_detail_lines(pch, indent="    ")
-        if pch.op == "modified" and not pch.fields and not detail_lines:
-            return
-        lines.append(_render_prop_line(pch))
-        lines.extend(detail_lines)
-
-    def _emit_one_class_change(class_ch: "Change") -> None:
-        """Emit the header line + any detail lines for a single class Change."""
-        lines.append(_format_class_header(class_ch))
-        if class_ch.op in ("modified", "renamed"):
-            lines.extend(_render_class_fields(class_ch))
-        elif class_ch.op == "reordered":
-            order = (class_ch.detail or {}).get("order", [])
-            lines.append(f"  properties reordered: {order}")
-        lines.extend(_render_detail_lines(class_ch, indent="  "))
-
-    # All class-level Changes for a class, in sorted order.  FIX VR-B1: a class
-    # may legitimately carry MORE THAN ONE class-level Change (a recycled name
-    # yields renamed + removed; a concurrent reorder yields modified/renamed +
-    # reordered).  Every such Change must render — the renderer must not silently
-    # drop a destructive `removed` or a `reordered` after emitting the first
-    # block, or the default text output would lie while records stay correct.
-    class_changes_by_class: dict[str, list["Change"]] = {}
-    for ch in changes:
-        if ch.kind == "class":
-            class_changes_by_class.setdefault(ch.target, []).append(ch)
-
-    def _emit_class_block(cls_name: str) -> None:
-        """Emit ALL class-level Changes for *cls_name*, then its property lines."""
-        emitted_class_blocks.add(cls_name)
-
-        class_chs = class_changes_by_class.get(cls_name, [])
-        if class_chs:
-            for class_ch in class_chs:
-                _emit_one_class_change(class_ch)
-        else:
-            # Class has only property-level changes — synthesise a ~ header.
-            lines.append(f"~ {cls_name} [modified]")
-
-        # Append property-level lines (already in sorted order from _sort_changes).
-        for pch in prop_changes_by_class.get(cls_name, []):
-            _emit_prop_change(pch)
-
-    # Walk changes in sorted order; emit each class's full block on first
-    # encounter (the block renders every class-level Change for that class).
-    for ch in changes:
-        if ch.kind == "metadata":
-            from_v = _bool_str(ch.from_)
-            to_v = _bool_str(ch.to)
-            lines.append(f"~ {ch.target}: {from_v} -> {to_v}")
-            continue
-
-        if ch.kind == "class":
-            cls_name = ch.target
-        else:  # property
-            cls_name = ch.target.split(".")[0]
-        if cls_name not in emitted_class_blocks:
-            _emit_class_block(cls_name)
-
-    return "\n".join(lines)
-
-
-def _render_records(changes: list["Change"]) -> list[dict]:
-    """Render an ordered list of :class:`Change` instances as structured record dicts.
-
-    Each dict follows the Data/Interface Contract key table:
-
-    * ``target`` (always present): dotted path — ``"ClassName"`` or
-      ``"ClassName.propName"`` (current name).
-    * ``kind`` (always present): ``"class"``, ``"property"``, or ``"metadata"``.
-    * ``op`` (always present): one of ``added``, ``removed``, ``modified``,
-      ``renamed``, ``reordered``, ``subclass_created``.
-    * ``from`` (renames only): previous name (mapped from :attr:`Change.from_`).
-    * ``to`` (renames only): new name (mapped from :attr:`Change.to`).
-    * ``fields`` (modified/renamed with field changes only): list of
-      ``{"field": str, "before": Any, "after": Any}`` entries.
-    * ``detail`` (compound/label/reorder only): the annotation dict.
-
-    Keys are **omitted** (not ``None``) when they do not apply to a given entry,
-    keeping records compact and stable.
-
-    Records are emitted in the same order as :func:`_render_text` lines —
-    identical to the sorted order supplied.
-
-    :param changes: Ordered :class:`Change` instances (already sorted).
-    :returns: Deterministic list of record dicts.
-    """
-    records: list[dict] = []
-    for ch in changes:
-        rec: dict = {
-            "target": ch.target,
-            "kind": ch.kind,
-            "op": ch.op,
-        }
-        if ch.from_ is not None:
-            rec["from"] = ch.from_
-        if ch.to is not None:
-            rec["to"] = ch.to
-        if ch.fields is not None:
-            rec["fields"] = ch.fields
-        if ch.detail is not None:
-            # Omit internal-only detail keys that are pipeline artefacts and
-            # not part of the published contract.
-            clean = {
-                k: v for k, v in ch.detail.items()
-                if k not in ("reorder_candidate", "before_order", "after_order")
-            }
-            if clean:
-                rec["detail"] = clean
-        records.append(rec)
-    return records
+#: Output-format registry: maps a ``fmt`` name to its renderer strategy.  Adding
+#: a format is one entry here plus its :class:`ChangeRenderer` subclass — no
+#: branching in :func:`build_change_report`, which selects the strategy by lookup.
+_RENDERERS: dict[str, type[ChangeRenderer]] = {
+    "text": TextChangeRenderer,
+    "records": RecordChangeRenderer,
+}
 
 
 def build_change_report(
@@ -1745,12 +1807,15 @@ def build_change_report(
         ``"records"`` for the guaranteed structured ``list[dict]``.
     :returns: A ``str`` when ``fmt="text"``; a ``list[dict]`` when
         ``fmt="records"``. Empty (``""`` / ``[]``) when nothing changed.
-    :raises ValueError: If *fmt* is neither ``"text"`` nor ``"records"``.
+    :raises ValueError: If *fmt* is not a registered format.
     """
-    if fmt not in ("text", "records"):
+    try:
+        renderer = _RENDERERS[fmt]()
+    except KeyError:
         raise ValueError(
-            f"change_report() fmt must be 'text' or 'records', got {fmt!r}"
-        )
+            f"change_report() fmt must be one of "
+            f"{sorted(_RENDERERS)}, got {fmt!r}"
+        ) from None
     rename_map = _replay_identities(baseline, change_log)
     raw_changes = _diff(baseline, current, rename_map)
     annotated = _annotate(raw_changes, change_log, baseline, current, rename_map)
@@ -1764,6 +1829,4 @@ def build_change_report(
         if not (ch.detail is not None and ch.detail.get("reorder_candidate"))
     ]
     ordered = _sort_changes(annotated)
-    if fmt == "text":
-        return _render_text(ordered)
-    return _render_records(ordered)
+    return renderer.render(ordered)
