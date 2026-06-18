@@ -325,7 +325,7 @@ wheels = [
 
 [[package]]
 name = "pydatagraphs"
-version = "0.5.7"
+version = "0.5.8"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },
