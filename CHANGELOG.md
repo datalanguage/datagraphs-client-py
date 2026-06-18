@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-06-18
+
+### Fixed
+- HTTP request header values are now sanitised to strip non-Latin-1 characters, preventing encoding errors when header content (e.g. credentials or project names) contains characters outside the Latin-1 range.
+
+## [0.5.8] - 2026-06-08
+
 ### Added
 - Always-on, in-memory schema change tracking with `Schema.change_report(fmt="text"|"records")` — emits a deterministic, net-effect, semantically-annotated changelog (class/property add/remove/modify, renames, combined rename+modify, subclass creation, reorders, label-property changes) suitable for attaching to a schema migration.
 - `change_report(fmt="records")` is the **fully-supported, guaranteed** output: deterministic and complete, with the full `from`/`to`/`fields`/`detail` payload for programmatic consumption. `change_report(fmt="text")` is a **best-effort human-readable** rendering of the same change set — it is not guaranteed to round-trip user-supplied field content (e.g. a `description` containing newlines), and the cross-subclass (`apply_to_subclasses`) annotation in the report is also best-effort; both are documented known limitations. Report cost is approximately `O(L*C)` for cascade-heavy edit histories (`L` cascade ops × `C` annotated subclasses), inherent to annotating each subclass.
@@ -26,6 +33,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `change_report()` is linear (no O(n²)) on the `apply_to_subclasses` path: per-operation subclass resolution is done lazily for surviving ops, and memoised across operations that touch the same subclass set, rather than re-resolving an op-log-length × class-count table.
 - `change_report()` degrades gracefully (rather than raising `KeyError`) on name-less class/property dicts introduced by untracked `to_dict()` edits or legacy/API-shaped input.
 - Schema mutation is no longer quadratic. The atomic-rollback guard previously deep-copied the **entire** class list on every outermost mutation, so building an N-class schema one mutation at a time was O(N²) and a sequence of L `apply_to_subclasses` cascades at fixed subclass-count C was O(L²·C) (each call re-copying every class, including the properties added by prior calls). Rollback state is now scoped to each operation's footprint — a shallow class-list snapshot plus a property-granular undo journal — making construction O(N) and accumulated wide cascades O(L·C). In practice this took the schema unit-test suite from ~90s back to ~2s; a large cascade build (400 subclasses × 160 cascade properties) dropped from ~19s to under 1s. The atomicity guarantee is unchanged: any mid-operation failure still rolls back byte-for-byte.
+
+## [0.5.7] - 2026-05-27
+
+### Changed
+- Resynced `uv.lock`.
+
+## [0.5.6] - 2026-05-27
+
+### Fixed
+- Label synonym property is no longer emitted as a non-nullable field in the schema, fixing a nullable-schema validation bug.
+
+## [0.5.5] - 2026-04-28
+
+### Fixed
+- `isFilterable` property flag is now preserved correctly on schema updates.
+
+## [0.5.4] - 2026-04-28
+
+### Changed
+- Updated the release workflow (`release.yml`).
+
+## [0.5.3] - 2026-04-28
+
+### Fixed
+- `isFilterable` property flag is now preserved correctly during schema migrations.
+
+## [0.5.2] - 2026-04-17
+
+### Changed
+- `update_schema_metadata` is now public so it can be invoked from automated deployments.
+
+## [0.5.1] - 2026-04-16
+
+### Added
+- `Client` constructor now validates that required arguments are supplied.
+
+## [0.5.0] - 2026-04-14
+
+### Added
+- Support for GQL/OpenCypher queries.
+
+## [0.4.11] - 2026-04-02
+
+### Changed
+- Gateway project deployment now bypasses source/target dataset comparisons for new (first-time) projects.
+
+## [0.4.10] - 2026-03-27
+
+### Changed
+- Batch uploading now handles errors per batch, so a single failing batch no longer aborts the entire upload.
+
+## [0.4.9] - 2026-03-25
+
+### Changed
+- Added resilience to dataset config loading during project deployment.
 
 ## [0.4.8] - 2026-03-25
 
