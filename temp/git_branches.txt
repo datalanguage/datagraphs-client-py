@@ -1,5 +1,0 @@
-  main
-* schema-migration
-  remotes/origin/HEAD -> origin/main
-  remotes/origin/main
-  remotes/origin/schema-migration
