@@ -514,3 +514,69 @@ class TestDatasetOperations:
         assert args[0] == "delete"
         assert args[1] == "https://api.datagraphs.io/test_project/2?filter=_all"
 
+
+# Credential Sanitisation Tests
+class TestCredentialSanitisation:
+
+    def test_should_replace_typographic_double_quotes_in_api_key(self):
+        client = DatagraphsClient("test_project", "“test_api_key”")
+        assert client._api_key == '"test_api_key"'
+
+    def test_should_replace_typographic_single_quotes_in_credentials(self):
+        client = DatagraphsClient(
+            "test_project", "key", client_id="‘id’", client_secret="o’brien"
+        )
+        assert client._client_id == "'id'"
+        assert client._client_secret == "o'brien"
+
+    def test_should_replace_dashes_and_minus_sign(self):
+        client = DatagraphsClient("test_project", "a–b—c−d")
+        assert client._api_key == "a-b-c-d"
+
+    def test_should_replace_non_breaking_space_and_strip_surrounding_whitespace(self):
+        client = DatagraphsClient("test_project", "  key value  ")
+        assert client._api_key == "key value"
+
+    def test_should_strip_zero_width_characters_and_byte_order_mark(self):
+        client = DatagraphsClient("test_project", "﻿key​value")
+        assert client._api_key == "keyvalue"
+
+    def test_should_sanitise_project_name_used_in_urls(self):
+        client = DatagraphsClient("“proj”", "key")
+        assert client.project_name == '"proj"'
+
+    def test_should_sanitise_service_url_and_preserve_trailing_slash(self):
+        client = DatagraphsClient("test_project", "key", service_url="https://host​.test/")
+        assert client._service_url == "https://host.test/"
+
+    def test_should_leave_plain_ascii_credentials_unchanged(self):
+        client = DatagraphsClient("test_project", "plain_ascii_key-123")
+        assert client._api_key == "plain_ascii_key-123"
+
+    def test_sanitised_credentials_are_encodable_as_http_headers(self):
+        # The contract that matters: whatever survives sanitisation must be
+        # serialisable into a latin-1 HTTP header, which is the failure that
+        # originally manifested as an opaque UnicodeEncodeError.
+        client = DatagraphsClient(
+            "“proj”",
+            "“key”",
+            client_id="‘id’",
+            client_secret="sec–ret",
+        )
+        for value in (client.project_name, client._api_key, client._client_id, client._client_secret):
+            value.encode("latin-1")  # must not raise
+
+
+# Unencodable Request Tests
+class TestUnencodableRequest:
+    @pytest.fixture(scope="function", autouse=True)
+    def setup(self, get_client):
+        self.client = get_client()
+
+    def test_should_raise_clear_error_when_request_cannot_be_encoded(self):
+        self.client._http_client.request.side_effect = UnicodeEncodeError(
+            'latin-1', '“', 0, 1, 'ordinal not in range(256)'
+        )
+        with pytest.raises(DatagraphsError, match='cannot be encoded'):
+            self.client.get('Test')
+

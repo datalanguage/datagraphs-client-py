@@ -21,6 +21,29 @@ class AuthenticationError(DatagraphsError):
     """Raised when authentication or authorisation fails."""
     pass
 
+# Typographic and invisible characters that routinely contaminate credentials
+# and configuration when values are copied from rich-text sources (email, Word,
+# Google Docs, Slack, web pages). Several of these — notably the "smart" quotes
+# and dashes — cannot be encoded in latin-1, which is how ``requests`` serialises
+# HTTP header values, so an unrepaired value fails with an opaque
+# ``UnicodeEncodeError`` long before reaching the API. Mapping each to its plain
+# ASCII equivalent (or stripping it, for zero-width artefacts) lets a pasted
+# value keep working. The table is built once at import for cheap ``str.translate``.
+_TEXT_REPLACEMENTS = {
+    # Double quotation marks
+    0x201C: '"', 0x201D: '"', 0x201E: '"', 0x201F: '"', 0x2033: '"',
+    # Single quotation marks / apostrophes
+    0x2018: "'", 0x2019: "'", 0x201A: "'", 0x201B: "'", 0x2032: "'",
+    # Dashes and minus sign
+    0x2013: '-', 0x2014: '-', 0x2015: '-', 0x2212: '-',
+    # Ellipsis
+    0x2026: '...',
+    # Non-breaking and other exotic spaces
+    0x00A0: ' ', 0x2007: ' ', 0x202F: ' ',
+    # Zero-width characters and byte-order mark — strip entirely
+    0x200B: None, 0x200C: None, 0x200D: None, 0xFEFF: None,
+}
+
 class Client:
     """Low-level HTTP client for the DataGraphs REST API.
 
@@ -67,15 +90,19 @@ class Client:
             raise ValueError("project_name is required")
         if api_key is None or len(api_key) == 0:
             raise ValueError("api_key is required")
-        self.project_name = project_name
-        self._api_key = api_key
-        self._client_id = client_id
-        self._client_secret = client_secret
+        self.project_name = self._sanitise_text(project_name)
+        self._api_key = self._sanitise_text(api_key)
+        self._client_id = self._sanitise_text(client_id)
+        self._client_secret = self._sanitise_text(client_secret)
         self._batch_size = batch_size
-        self._auth_token = ''
+        service_url = self._sanitise_text(service_url)
         self._service_url = service_url if service_url.endswith('/') else f'{service_url}/'
         self._http_client = requests
         self._wait_time_ms = self.DEFAULT_WAIT_TIME_MS
+        self._auth_token = ''
+
+    def _sanitise_text(self, value: str) -> str:
+        return value.translate(_TEXT_REPLACEMENTS).strip()
 
     @property
     def _base_url(self) -> str:
@@ -149,8 +176,18 @@ class Client:
                     raise AuthenticationError(f'Authentication failed after {self._MAX_AUTH_RETRIES+1} attempts')
             else:
                 raise DatagraphsError(f"Request failed with status {response.status_code}: {response.text}")
+        except UnicodeError as e:
+            # Strict in what we send: a value escaped sanitisation and cannot be
+            # encoded into the HTTP request (latin-1 header serialisation). Surface
+            # a clear, actionable error instead of a bare codec failure.
+            raise DatagraphsError(
+                "Request contains a character that cannot be encoded in an HTTP "
+                "header or URL, most likely a non-ASCII character in a credential "
+                "or project name copied from a rich-text source. Check api_key, "
+                f"client_id, client_secret and project_name: {e}"
+            ) from e
         except requests.exceptions.RequestException as e:
-            raise DatagraphsError(f"Request failed: {e}")
+            raise DatagraphsError(f"Request failed: {e}") from e
 
     def _has_oauth_credentials(self) -> bool:
         return bool(self._client_id and self._client_secret)
