@@ -10,21 +10,24 @@ recording, baseline capture, and atomic rollback are exercised in
 import collections
 import copy
 import json
+from typing import ClassVar
+
 import pytest
+
+from datagraphs.enums import DATATYPE, REPORT_FORMAT
 from datagraphs.schema import (
-    Schema as DatagraphsSchema,
     PropertyExistsError,
     PropertyNotFoundError,
 )
+from datagraphs.schema import (
+    Schema as DatagraphsSchema,
+)
 from datagraphs.schema_report import (
     Change,
-    RenameMap,
+    _annotate,
     _diff,
     _replay_identities,
-    _annotate,
 )
-from datagraphs.enums import DATATYPE, REPORT_FORMAT
-
 
 # ---------------------------------------------------------------------------
 # Phase 3 — Structural diff engine tests
@@ -51,7 +54,7 @@ class TestChangeDiff:
     # ------------------------------------------------------------------
 
     #: Minimal baseline schema — never mutated directly; copy via _baseline().
-    _BASE: dict = {
+    _BASE: ClassVar[dict] = {
         "name": "Test Model v1.0",
         "createdDate": "2024-01-01T00:00:00Z",
         "lastModifiedDate": "2024-01-01T00:00:00Z",
@@ -594,7 +597,7 @@ class TestChangeRenames:
     op-log (s._tracker.change_log) and the diff runs against (s._tracker.baseline, s._schema).
     """
 
-    _BASE: dict = {
+    _BASE: ClassVar[dict] = {
         "name": "Test Model v1.0",
         "createdDate": "2024-01-01T00:00:00Z",
         "lastModifiedDate": "2024-01-01T00:00:00Z",
@@ -937,7 +940,7 @@ class TestChangeSemanticAnnotation:
     All Schema fixtures are deep-copied per-test.
     """
 
-    _BASE: dict = {
+    _BASE: ClassVar[dict] = {
         "name": "Test Model v1.0",
         "createdDate": "2024-01-01T00:00:00Z",
         "lastModifiedDate": "2024-01-01T00:00:00Z",
@@ -1260,7 +1263,7 @@ class TestChangeReportRendering:
     # ------------------------------------------------------------------
 
     #: Minimal schema with Substance having dosage + deprecatedCode.
-    _SUBSTANCE_BASE: dict = {
+    _SUBSTANCE_BASE: ClassVar[dict] = {
         "name": "My Model v1.0",
         "createdDate": "2024-01-01T00:00:00Z",
         "lastModifiedDate": "2024-01-01T00:00:00Z",
@@ -1305,7 +1308,7 @@ class TestChangeReportRendering:
     }
 
     #: Minimal schema with Animal having label + age.
-    _ANIMAL_BASE: dict = {
+    _ANIMAL_BASE: ClassVar[dict] = {
         "name": "Test Model v1.0",
         "createdDate": "2024-01-01T00:00:00Z",
         "lastModifiedDate": "2024-01-01T00:00:00Z",
@@ -1554,10 +1557,7 @@ class TestChangeReportRendering:
         # The combined line contains the rename marker and the field flip.
         assert "dosage -> dose [renamed]" in text
         assert "isOptional: true -> false" in text
-        # And there must be exactly one line mentioning 'dose' (combined, not split).
-        dose_lines = [ln for ln in text.splitlines() if "dose" in ln and "deprecated" not in ln]
-        # Only one logical line for the rename+modify (may also include the
-        # Substance header, but the rename+isOptional data is on exactly one line).
+        # The rename+modify must be ONE combined line (not split across two).
         rename_lines = [ln for ln in text.splitlines() if "dosage -> dose" in ln]
         assert len(rename_lines) == 1
 

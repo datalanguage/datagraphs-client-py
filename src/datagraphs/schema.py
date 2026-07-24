@@ -1,34 +1,30 @@
 """Schema definition and manipulation for DataGraphs domain models."""
 
-import json
 import datetime
+import json
 from collections import deque
-from typing import Optional, Self, Union
+from typing import Self
+
 from datagraphs.enums import DATATYPE, REPORT_FORMAT
-from datagraphs.utils import SchemaTransformer
 from datagraphs.schema_report import build_change_report
 from datagraphs.schema_tracker import ChangeTracker
+from datagraphs.utils import SchemaTransformer
 
 
 class SchemaError(Exception):
     """Base exception for Schema-related errors."""
-    pass
 
 class ClassNotFoundError(SchemaError):
     """Raised when a class is not found in the schema."""
-    pass
 
 class PropertyNotFoundError(SchemaError):
     """Raised when a property is not found in a class."""
-    pass
 
 class PropertyExistsError(SchemaError):
     """Raised when attempting to create a property that already exists."""
-    pass
 
 class InvalidInversePropertyError(SchemaError):
     """Raised when an invalid inverse property is specified."""
-    pass
 
 class Schema:
     """In-memory representation of a DataGraphs domain model schema.
@@ -162,7 +158,7 @@ class Schema:
         """Create a description dict in the new format."""
         return {"en": text, "@none": text}
 
-    def _get_description_text(self, desc: Union[str, dict]) -> str:
+    def _get_description_text(self, desc: str | dict) -> str:
         """Extract plain text from a description (handles both str and dict)."""
         if isinstance(desc, dict):
             return desc.get('@none', desc.get('en', ''))
@@ -421,16 +417,16 @@ class Schema:
         self,
         class_name: str,
         prop_name: str,
-        datatype: Union[DATATYPE, str],
+        datatype: DATATYPE | str,
         description: str = "",
         is_optional: bool = True,
         is_array: bool = False,
         is_nested: bool = False,
         is_lang_string: bool = True,
         inverse_of: str = "",
-        enums: Optional[list] = None,
+        enums: list | None = None,
         is_synonym: bool = False,
-        is_filterable: Optional[bool] = None,
+        is_filterable: bool | None = None,
         apply_to_subclasses: bool = False,
     ) -> None:
         """Create a new property on a class.
@@ -460,7 +456,7 @@ class Schema:
         with self._tracker.track() as outermost, self._tracker.atomic(outermost):
             if enums is None:
                 enums = []
-            if not (hasattr(datatype, 'value') and (datatype.value in set(i.value for i in DATATYPE))) and not isinstance(datatype, str):
+            if not (hasattr(datatype, 'value') and (datatype.value in {i.value for i in DATATYPE})) and not isinstance(datatype, str):
                 raise TypeError(f"Unspecified datatype for {class_name}.{prop_name}")
 
             # Build the by-name and parent->children indices ONCE (FIX round-4 B3):
@@ -519,9 +515,9 @@ class Schema:
 
     def _create_property_on_class(
         self, class_def: dict, owner_class_name: str, prop_name: str,
-        datatype: Union[DATATYPE, str], description: str, is_optional: bool,
+        datatype: DATATYPE | str, description: str, is_optional: bool,
         is_array: bool, is_nested: bool, is_lang_string: bool, inverse_of: str,
-        enums: list, is_synonym: bool, is_filterable: Optional[bool],
+        enums: list, is_synonym: bool, is_filterable: bool | None,
     ) -> None:
         """Create one property on one already-resolved class dict.
 
@@ -562,7 +558,7 @@ class Schema:
     def _assign_is_array(self, prop_def: dict, is_array: bool = False) -> None:
         prop_def["isArray"] = is_array
 
-    def _assign_datatype(self, prop_def: dict, datatype: Union[DATATYPE, str], is_nested: bool = False, is_lang_string: bool = True) -> None:
+    def _assign_datatype(self, prop_def: dict, datatype: DATATYPE | str, is_nested: bool = False, is_lang_string: bool = True) -> None:
         if datatype in DATATYPE:
             prop_def["type"] = "DatatypeProperty"
             prop_def["range"] = str(datatype)
@@ -583,18 +579,18 @@ class Schema:
             prop_def.setdefault("isSymmetric", False)
             prop_def.pop("isLangString", None)
 
-    def _assign_inverse_of(self, prop_def: dict, class_name: str, inverse_of: str, datatype: Union[DATATYPE, str]) -> None:
+    def _assign_inverse_of(self, prop_def: dict, class_name: str, inverse_of: str, datatype: DATATYPE | str) -> None:
         if inverse_of and self._is_valid_inverse_of(class_name, inverse_of, datatype):
             prop_def["inverseOf"] = inverse_of
 
-    def _assign_enum(self, prop_def: dict, datatype: Union[DATATYPE, str], enums: list) -> None:
+    def _assign_enum(self, prop_def: dict, datatype: DATATYPE | str, enums: list) -> None:
         if datatype == DATATYPE.ENUM:
             prop_def["validationRules"] = [{
                 "type": "enumeration",
                 "value": enums,
             }]
 
-    def _assign_is_filterable(self, prop_def: dict, is_filterable: Optional[bool] = None) -> None:
+    def _assign_is_filterable(self, prop_def: dict, is_filterable: bool | None = None) -> None:
         if is_filterable is not None:
             prop_def["isFilterable"] = is_filterable
 
@@ -602,7 +598,7 @@ class Schema:
         if is_synonym is not None:
             prop_def["isLabelSynonym"] = is_synonym
 
-    def _is_valid_inverse_of(self, class_name: str, inverse_of: str, datatype: Union[DATATYPE, str]) -> bool:
+    def _is_valid_inverse_of(self, class_name: str, inverse_of: str, datatype: DATATYPE | str) -> bool:
         is_valid = False
         if datatype not in DATATYPE:
             class_def = self.find_class(datatype)
@@ -626,17 +622,17 @@ class Schema:
         self,
         class_name: str,
         prop_name: str,
-        datatype: Union[DATATYPE, str] = None,
-        description: str = None,
-        is_optional: bool = None,
-        is_array: bool = None,
-        is_nested: bool = None,
-        is_lang_string: bool = None,
+        datatype: DATATYPE | str | None = None,
+        description: str | None = None,
+        is_optional: bool | None = None,
+        is_array: bool | None = None,
+        is_nested: bool | None = None,
+        is_lang_string: bool | None = None,
         inverse_of: str = "",
-        enums: Optional[list] = None,
+        enums: list | None = None,
         is_synonym: bool = False,
-        is_filterable: bool = None,
-        apply_to_subclasses: bool = None,
+        is_filterable: bool | None = None,
+        apply_to_subclasses: bool | None = None,
     ) -> None:
         """Update an existing property on a class.
 
@@ -710,7 +706,7 @@ class Schema:
 
     def _update_property_on_class(
         self, class_def: dict, prop_def: dict, owner_class_name: str,
-        datatype: Union[DATATYPE, str], description, is_optional, is_array,
+        datatype: DATATYPE | str, description, is_optional, is_array,
         is_nested, is_lang_string, inverse_of, enums, is_synonym, is_filterable,
     ) -> None:
         """Update one already-resolved property on one already-resolved class.
@@ -788,7 +784,7 @@ class Schema:
             if outermost:
                 self._tracker.record("delete_property", class_name=class_name, prop_name=prop_name)
 
-    def find_class(self, name: str) -> Optional[dict]:
+    def find_class(self, name: str) -> dict | None:
         """Find a class definition by name.
 
         :param name: The class name to look up.
@@ -862,7 +858,7 @@ class Schema:
         """
         return self._descendants(baseclass, self._children_index())
 
-    def find_property(self, props: list, name: str) -> Optional[dict]:
+    def find_property(self, props: list, name: str) -> dict | None:
         """Find a property by name within a list of property dicts.
 
         :param props: List of property dicts to search.

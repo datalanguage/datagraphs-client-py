@@ -1,14 +1,16 @@
 import json
 import logging
 import os
-import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
+
+import pytest
+
+from datagraphs.client import Client as DatagraphsClient
+from datagraphs.dataset import Dataset
 from datagraphs.enums import VALIDATION_MODE
 from datagraphs.gateway import Gateway as DatagraphsGateway
-from datagraphs.client import Client as DatagraphsClient
 from datagraphs.schema import Schema
-from datagraphs.dataset import Dataset
 
 DATA_DIR = Path(__file__).parent / 'data'
 WORKING_DIR = DATA_DIR / 'tmp'
@@ -155,7 +157,7 @@ class TestLoadData:
             file_path=str(SUBSTANCE_ROLE_FILE)
         )
         mock_client.put.assert_called_once()
-        args, kwargs = mock_client.put.call_args
+        args = mock_client.put.call_args.args
         assert args[0] == dataset.slug
         loaded_entities = args[1]
         assert len(loaded_entities) == len(substance_role_data)
@@ -386,7 +388,7 @@ class TestDumpProject:
             assert written_datasets[0] == datasets[0].to_dict()
 
     def test_should_use_project_name_and_schema_version_in_filenames(self, gateway, mock_client, mock_schema):
-        schema_mock = MagicMock(version='3.1', to_dict=lambda: {})
+        schema_mock = MagicMock(version='3.1', to_dict=dict)
         mock_client.get_schema.return_value = schema_mock
         mock_client.project_name = 'acme-corp'
         mock_client.get_datasets.return_value = []
@@ -396,7 +398,7 @@ class TestDumpProject:
         assert (WORKING_DIR / 'acme-corp-v3.1-datasets.json').exists()
 
     def test_should_dump_multiple_datasets(self, gateway, mock_client, mock_schema):
-        schema_mock = MagicMock(version='1.0', to_dict=lambda: {})
+        schema_mock = MagicMock(version='1.0', to_dict=dict)
         mock_client.get_schema.return_value = schema_mock
         mock_client.project_name = 'test-project'
         ds1 = Dataset(name='DS1', project='test-project', classes=['TypeA'])
@@ -414,7 +416,7 @@ class TestDumpProject:
             assert written_datasets[1] == ds2.to_dict()
 
     def test_should_dump_empty_datasets_list(self, gateway, mock_client, mock_schema):
-        schema_mock = MagicMock(version='1.0', to_dict=lambda: {})
+        schema_mock = MagicMock(version='1.0', to_dict=dict)
         mock_client.get_schema.return_value = schema_mock
         mock_client.project_name = 'test-project'
         mock_client.get_datasets.return_value = []

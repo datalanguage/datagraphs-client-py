@@ -1,9 +1,9 @@
 """URN parsing, project-name mapping, and schema transformation utilities."""
 
+import datetime
 import re
 import uuid
-import datetime
-from typing import Dict, List, Any, Union
+from typing import Any, ClassVar
 
 _URN_PATTERN = re.compile(
     r"^[Uu][Rr][Nn]:"                          # "urn:" prefix (case-insensitive)
@@ -66,10 +66,10 @@ def get_id_from_urn(urn: str) -> str:
     return urn[urn.rfind(':') + 1:]
 
 def map_project_name(
-    obj: Union[Dict, List, str, Any], 
+    obj: dict | list | str | Any, 
     from_urn: str, 
     to_urn: str
-) -> Union[Dict, List, str, Any]:
+) -> dict | list | str | Any:
     """Recursively replace a URN prefix in all string values of *obj*.
 
     :param obj: The object to process (dict, list, str, or other).
@@ -89,7 +89,7 @@ def map_project_name(
 class SchemaTransformer:
     """Transforms schemas between legacy (old) and new format."""
 
-    DATATYPE_MAPPINGS = {
+    DATATYPE_MAPPINGS: ClassVar[dict] = {
         'text': {"id": "urn:datagraphs:datatypes:text", "elasticsearchDatatype": "text", "xsdDatatype": "string"},
         'date': {"id": "urn:datagraphs:datatypes:date", "elasticsearchDatatype": "date", "xsdDatatype": "date"},
         'datetime': {"id": "urn:datagraphs:datatypes:datetime", "elasticsearchDatatype": "dateTime", "xsdDatatype": "dateTime"},

@@ -1,5 +1,6 @@
 import pytest
-from lib import get_client, get_empty_schema, get_schema, get_datasets, get_data
+from lib import get_client, get_data, get_datasets, get_empty_schema, get_schema
+
 
 class TestClient:
 

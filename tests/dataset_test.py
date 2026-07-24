@@ -1,5 +1,6 @@
 from datagraphs.dataset import Dataset
 
+
 class TestDataset:
 
     def test_should_create_dataset_from_dict(self):

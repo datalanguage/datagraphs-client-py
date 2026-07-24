@@ -1,25 +1,25 @@
 """DataGraphs API client for interacting with the DataGraphs service."""
 
-import time
-import logging
-import requests
 import json
+import logging
+import time
 import urllib.parse
-from datetime import datetime, timezone
-from typing import Optional, Dict, List, Any, Union
-from datagraphs.schema import Schema as DatagraphsSchema
+from datetime import UTC, datetime
+from typing import Any
+
+import requests
+
 from datagraphs.dataset import Dataset
 from datagraphs.enums import HTTP, SCHEMA_APPLY_MODE
+from datagraphs.schema import Schema as DatagraphsSchema
 
 _logger = logging.getLogger(__name__)
 
 class DatagraphsError(Exception):
     """Base exception for DataGraphs client errors."""
-    pass
 
 class AuthenticationError(DatagraphsError):
     """Raised when authentication or authorisation fails."""
-    pass
 
 # Typographic and invisible characters that routinely contaminate credentials
 # and configuration when values are copied from rich-text sources (email, Word,
@@ -151,7 +151,7 @@ class Client:
                 raise AuthenticationError(f"Failed to obtain auth token: {e}")
         return self._auth_token
 
-    def _request(self, method: HTTP, url: str, _retry_count: int = 0, **kwargs) -> Optional[Dict[str, Any]]:
+    def _request(self, method: HTTP, url: str, _retry_count: int = 0, **kwargs) -> dict[str, Any] | None:
         """Execute an HTTP request with automatic auth retry.
 
         :param method: The HTTP method to use.
@@ -200,7 +200,7 @@ class Client:
     def _has_oauth_credentials(self) -> bool:
         return bool(self._client_id and self._client_secret)
 
-    def _get_headers(self, lang: str = 'all') -> Dict[str, str]: 
+    def _get_headers(self, lang: str = 'all') -> dict[str, str]: 
         headers = {
             'Accept': 'application/json',
             'x-api-key': self._api_key,
@@ -240,7 +240,7 @@ class Client:
 
     def _cache_buster(self) -> str:
         """Return a cache-busting timestamp value."""
-        return str(datetime.now(tz=timezone.utc).timestamp())
+        return str(datetime.now(tz=UTC).timestamp())
 
     def status(self) -> str:
         """Check the API service status.
@@ -251,7 +251,7 @@ class Client:
         response = self._request(HTTP.GET, url, headers=self._get_headers())
         return response.get('api', 'unknown')
 
-    def get(self, class_name: str, lang: str = 'all', include_date_fields: bool = False) -> List[Dict[str, Any]]:
+    def get(self, class_name: str, lang: str = 'all', include_date_fields: bool = False) -> list[dict[str, Any]]:
         """Retrieve all entities of a given type.
 
         Automatically paginates through all results.
@@ -351,7 +351,7 @@ class Client:
             previous_page_token: str = '',
             next_page_token: str = '',
             include_date_fields: bool = False
-        ) -> Union[List[Dict[str, Any]], tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
+        ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Query the API with filters, facets, sorting, and pagination.
         
         :param gql: a GQL query string - if this is specified then all other arguments are ignored.
@@ -396,7 +396,7 @@ class Client:
             previous_page_token: str = '',
             next_page_token: str = '',
             include_date_fields: bool = False
-        ) -> Union[List[Dict[str, Any]], tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
+        ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         if page_size == -1:
             page_size = self._batch_size
         url = self._get_query_url(
@@ -416,7 +416,7 @@ class Client:
         else:
             return []
 
-    def _query_gql(self, gql:str, lang: str) -> List[Dict[str, Any]]:
+    def _query_gql(self, gql:str, lang: str) -> list[dict[str, Any]]:
         url = f'{self._base_url}_cypher'
         headers = self._get_headers(lang)
         headers['Content-Type'] = 'application/json'
@@ -426,7 +426,7 @@ class Client:
         else:
             return []
 
-    def put(self, dataset: str, data: Union[Dict[str, Any], List[Dict[str, Any]]]) -> int:
+    def put(self, dataset: str, data: dict[str, Any] | list[dict[str, Any]]) -> int:
         """Load entities into a dataset.
 
         Automatically batches large payloads according to the configured
@@ -446,7 +446,7 @@ class Client:
                 _logger.info('   Loading batch %d-%d of %d entities into dataset %s in repo: %s', i, end, length, dataset, self.project_name)
                 try:
                     self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=batch, headers=self._get_headers())
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - intentional: log the failed batch and continue loading the rest
                     _logger.error('Error loading batch %d-%d of %d entities into dataset %s: %s', i, end, length, dataset, str(e))
         else:
             self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=entities, headers=self._get_headers())
@@ -461,16 +461,16 @@ class Client:
         url = f'{self._base_url}{class_name}/{entity_id}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
-    def apply_schema(self, schema: DatagraphsSchema, mode: SCHEMA_APPLY_MODE = SCHEMA_APPLY_MODE.APPLY) -> None | List[Dict[str, Any]]:
+    def apply_schema(self, schema: DatagraphsSchema, mode: SCHEMA_APPLY_MODE = SCHEMA_APPLY_MODE.APPLY) -> None | list[dict[str, Any]]:
         """Apply a schema to the project, replacing the currently active domain model.
 
         :param schema: The schema to apply.
         """
         _logger.info('Applying schema to project: %s', self.project_name)
-        url = f'{self._base_url}models/_active'+(f'?dryRun=true' if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY else '')
+        url = f'{self._base_url}models/_active'+('?dryRun=true' if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY else '')
         resp = self._request(HTTP.PUT, url, data=schema.to_json(), headers=self._get_headers())
         if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY:
-            return resp["errors"] if "errors" in resp else []
+            return resp.get("errors", [])
         if "errors" in resp and len(resp["errors"]) > 0:
             if mode == SCHEMA_APPLY_MODE.FORCE:
                 self._resolve_schema_update_dependencies(resp["errors"])
@@ -479,7 +479,7 @@ class Client:
                 _logger.error('Schema application failed with errors: %s', resp["errors"])
                 raise DatagraphsError(f'Schema application failed with errors: {resp["errors"]}')
 
-    def _resolve_schema_update_dependencies(self, dependencies: List[Dict]) -> None:
+    def _resolve_schema_update_dependencies(self, dependencies: list[dict]) -> None:
         """Resolve schema update dependencies by clearing or dropping classes as needed.
         :param dependencies: The list of schema update dependencies.
         """
@@ -487,7 +487,7 @@ class Client:
         classes_to_clear, classes_to_drop = self._identify_schema_update_dependencies(dependencies)
         self._remove_schema_update_dependencies(classes_to_clear, classes_to_drop)
 
-    def _identify_schema_update_dependencies(self, dependencies: List[Dict]) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    def _identify_schema_update_dependencies(self, dependencies: list[dict]) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
         """Identify classes that need to be cleared or dropped based on the new schema.
 
         :param dependencies: The list of schema update dependencies.
@@ -540,7 +540,7 @@ class Client:
         response = self._request(HTTP.GET, url, headers=self._get_headers())        
         return DatagraphsSchema.create_from(response)
         
-    def get_datasets(self) -> List[Dataset]:
+    def get_datasets(self) -> list[Dataset]:
         """Retrieve all datasets in the project.
 
         :returns: A list of `Dataset` objects.
@@ -552,7 +552,7 @@ class Client:
             _logger.warning('Dataset results (%d) may have been truncated at page size limit (%d)', len(data), self._DEFAULT_DATASETS_PAGE_SIZE)
         return [Dataset.create_from(item) for item in data]
 
-    def get_dataset(self, dataset_slug: str) -> Optional[Dataset]:
+    def get_dataset(self, dataset_slug: str) -> Dataset | None:
         """Retrieve a specific dataset by slug.
 
         :param dataset_slug: The slug of the dataset to retrieve.
@@ -561,7 +561,7 @@ class Client:
         datasets = self.get_datasets()
         return next((d for d in datasets if d.slug == dataset_slug), None)
 
-    def apply_datasets(self, datasets: List[Dataset], timeout_ms: int=_DATASETS_TIMEOUT_MS) -> None:
+    def apply_datasets(self, datasets: list[Dataset], timeout_ms: int=_DATASETS_TIMEOUT_MS) -> None:
         """Create or update datasets so they match the supplied list.
 
         New datasets are created; existing datasets with changes are updated.
@@ -583,7 +583,7 @@ class Client:
             time.sleep(self._wait_time_ms / 1000)
         self._assert_datasets_applied(datasets, timeout_ms)
 
-    def _assert_datasets_applied(self, datasets: List[Dataset], timeout_ms: int) -> None:
+    def _assert_datasets_applied(self, datasets: list[Dataset], timeout_ms: int) -> None:
         count = 1
         _logger.info('Verifying all datasets have been applied successfully...')
         while len(self.get_datasets()) != len(datasets):

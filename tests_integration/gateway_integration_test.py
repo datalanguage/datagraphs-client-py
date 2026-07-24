@@ -1,8 +1,10 @@
-import pytest
 import json
 from pathlib import Path
-from datagraphs.enums import VALIDATION_MODE
+
+import pytest
 from lib import get_client, get_data, get_datasets, get_gateway, get_schema
+
+from datagraphs.enums import VALIDATION_MODE
 
 DATA_DIR = Path(__file__).parent / 'data'
 WORKING_DIR = DATA_DIR / 'tmp'

@@ -1,10 +1,12 @@
 import os
+
 import yaml
+
 from datagraphs.client import Client as DatagraphsClient
-from datagraphs.gateway import Gateway as DatagraphsGateway 
-from datagraphs.enums import DATATYPE
-from datagraphs.schema import Schema as DatagraphsSchema
 from datagraphs.dataset import Dataset
+from datagraphs.enums import DATATYPE
+from datagraphs.gateway import Gateway as DatagraphsGateway
+from datagraphs.schema import Schema as DatagraphsSchema
 
 current_folder = os.path.dirname(os.path.realpath(__file__))
 config_file_location = os.path.join(current_folder, '.app.config.yml')

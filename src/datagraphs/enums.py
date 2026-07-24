@@ -1,5 +1,6 @@
 from enum import StrEnum
 
+
 class HTTP(StrEnum):
     """Enumeration of HTTP methods available in the DataGraphs API."""
     GET = 'get'

@@ -1,15 +1,15 @@
 """Gateway for synchronising data between the filesystem and a DataGraphs project."""
 
-import time
 import json
 import logging
+import time
 from pathlib import Path
-from typing import Union
+
 from datagraphs.client import Client as DatagraphsClient
-from datagraphs.schema import Schema
 from datagraphs.dataset import Dataset
-from datagraphs.utils import get_project_from_urn, map_project_name
 from datagraphs.enums import VALIDATION_MODE
+from datagraphs.schema import Schema
+from datagraphs.utils import get_project_from_urn, map_project_name
 
 _logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class Gateway:
         if self._validate_datasets(datasets, self._client.get_datasets(), validation_mode):
             try:
                 self._teardown_and_load_project(schema, datasets, hard_teardown=False)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - intentional: any soft-teardown failure triggers the hard-teardown fallback below
                 _logger.error('Error loading project: %s', str(e))
                 _logger.info('Applying hard teardown and attempting to redeploy...')
                 self._teardown_and_load_project(schema, datasets, hard_teardown=True)
@@ -114,7 +114,7 @@ class Gateway:
                     missing_classes.append({'class_name': class_name, 'dataset_slug': dataset.slug})
         return dataset_classes, missing_classes
 
-    def dump_project(self, schema_path: Union[str, Path], datasets_path: Union[str, Path]) -> None:
+    def dump_project(self, schema_path: str | Path, datasets_path: str | Path) -> None:
         """Export the project schema and dataset configurations to JSON files.
 
         Files are named ``{project_name}-v{version}-schema.json`` and
@@ -127,14 +127,14 @@ class Gateway:
         self._dump_schema(schema_path, name_prefix)
         self._dump_datasets(datasets_path, name_prefix)
 
-    def _dump_schema(self, schema_path: Union[str, Path], name_prefix: str) -> None:
+    def _dump_schema(self, schema_path: str | Path, name_prefix: str) -> None:
         """Dump the project schema to a JSON file."""
         schema_path = Path(schema_path) / f'{name_prefix}-schema.json'
         schema = self._client.get_schema()  
         with open(schema_path, 'w', encoding='utf-8') as schema_file:
             json.dump(schema.to_dict(), schema_file, indent=2)
     
-    def _dump_datasets(self, datasets_path: Union[str, Path], name_prefix: str) -> None:
+    def _dump_datasets(self, datasets_path: str | Path, name_prefix: str) -> None:
         """Dump the project datasets to JSON files."""
         datasets_path = Path(datasets_path) / f'{name_prefix}-datasets.json'
         datasets = self._client.get_datasets()
@@ -145,8 +145,8 @@ class Gateway:
     def load_data(
         self,
         class_name: str = Schema.ALL_CLASSES,
-        from_dir_path: Union[str, Path] = "",
-        file_path: Union[str, Path] = "",
+        from_dir_path: str | Path = "",
+        file_path: str | Path = "",
     ) -> dict:
         """Load data from JSON files into the DataGraphs project.
 
@@ -175,7 +175,7 @@ class Gateway:
                 stats["skipped"] += 1
         return stats
 
-    def _load_data_for_dataset(self, stats: dict, dataset: Dataset, from_dir_path: Union[str, Path]) -> dict:
+    def _load_data_for_dataset(self, stats: dict, dataset: Dataset, from_dir_path: str | Path) -> dict:
         """Load data for all non-base classes in a dataset."""
         for dataset_class in dataset.classes:
             if len(self._get_schema().find_subclasses(dataset_class)) == 0:
@@ -184,13 +184,13 @@ class Gateway:
                 _logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
         return stats
 
-    def _load_data_for_class(self, stats: dict, class_name: str, dataset_slug: str, from_dir_path: Union[str, Path] = "", file_path: Union[str, Path] = "") -> dict:
+    def _load_data_for_class(self, stats: dict, class_name: str, dataset_slug: str, from_dir_path: str | Path = "", file_path: str | Path = "") -> dict:
         """Load data for a specific class from a JSON file."""
         try:
             result = self._load_from_file(class_name, dataset_slug, from_dir_path, file_path)
             stats["loaded"] += result["loaded"]
             stats["skipped"] += result["skipped"]
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - intentional: log the failing class, count it skipped, keep loading others
             _logger.error('Error loading data for %s: %s', class_name, str(e))
             stats["skipped"] += 1
         return stats
@@ -199,8 +199,8 @@ class Gateway:
         self,
         class_name: str,
         dataset_slug: str,
-        from_dir_path: Union[str, Path] = "",
-        file_path: Union[str, Path] = "",
+        from_dir_path: str | Path = "",
+        file_path: str | Path = "",
     ) -> dict:
         """Read a JSON file and PUT its contents into the project.
 
@@ -247,7 +247,7 @@ class Gateway:
                     entity = map_project_name(entity, from_urn=f'urn:{source_project_name}:', to_urn=f'urn:{self._client.project_name}:')
                 entities.append(entity)
             else:
-                raise ValueError(f'Invalid format - could not read data: {str(entity)}')
+                raise ValueError(f'Invalid format - could not read data: {entity!s}')  # noqa: TRY004 - ValueError kept for consistency with the sibling raise below and the documented contract
         return entities
 
     def _get_project_name_from_entity(self, entity: dict) -> str:
@@ -259,7 +259,7 @@ class Gateway:
                 raise ValueError(f'Expected id property to be string - found type {type(entity['id'])}')
         return project_name
 
-    def dump_data(self, to_dir_path: Union[str, Path], class_name: str = Schema.ALL_CLASSES, excluded_class_names: str = "", include_date_fields: bool = False) -> dict:
+    def dump_data(self, to_dir_path: str | Path, class_name: str = Schema.ALL_CLASSES, excluded_class_names: str = "", include_date_fields: bool = False) -> dict:
         """Export entity data from the project to JSON files on disk.
 
         Each class is written to a separate ``<ClassName>.json`` file. Base
@@ -289,17 +289,17 @@ class Gateway:
                         result = self._persist_to_file(dataset_class, to_dir_path, include_date_fields)
                         stats["exported"] += result
                         time.sleep(self._wait_time_ms / 1000)
-                    except Exception as e:
-                        _logger.error('Error exporting data for %s: %s', dataset_class, str(e))                     
+                    except Exception as e:  # noqa: BLE001 - intentional: log the failing class and continue exporting the rest
+                        _logger.error('Error exporting data for %s: %s', dataset_class, str(e))
         else:
             try:
                 result = self._persist_to_file(class_name, to_dir_path, include_date_fields)
                 stats["exported"] += result
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - intentional: log the failing class and return partial export stats
                 _logger.error('Error exporting data for %s: %s', class_name, str(e))
         return stats
 
-    def _persist_to_file(self, class_name: str, to_dir_path: Union[str, Path], include_date_fields: bool) -> int:
+    def _persist_to_file(self, class_name: str, to_dir_path: str | Path, include_date_fields: bool) -> int:
         """Fetch entities of *class_name* from the API and write them to a JSON file.
 
         Args:

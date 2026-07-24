@@ -18,14 +18,15 @@ Permutations covered:
 import json
 import os
 import sys
+
 import yaml
 
 # Add parent dir so we can import datagraphs
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from datagraphs.client import Client as DatagraphsClient
-from datagraphs.schema import Schema as DatagraphsSchema
 from datagraphs.enums import DATATYPE
+from datagraphs.schema import Schema as DatagraphsSchema
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'temp')
 
@@ -189,8 +190,8 @@ def main():
     print("\nStep 5: Comparing property counts per class...")
     old_classes_by_name = {c['label']: c for c in old_format['classes']}
     new_classes_by_name = {c.get('name', c.get('label')): c for c in new_format['classes']}
-    for class_name in old_classes_by_name:
-        old_prop_count = len(old_classes_by_name[class_name].get('objectProperties', []))
+    for class_name, old_cls in old_classes_by_name.items():
+        old_prop_count = len(old_cls.get('objectProperties', []))
         new_cls = new_classes_by_name.get(class_name)
         if new_cls is None:
             print(f"  WARNING: Class '{class_name}' not found in API response")

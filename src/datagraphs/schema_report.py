@@ -15,12 +15,12 @@ pipeline detail.
 
 import json
 from abc import ABC, abstractmethod
-from itertools import groupby
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from itertools import groupby
+from typing import Any
 
 from datagraphs.enums import REPORT_FORMAT
-
 
 # ---------------------------------------------------------------------------
 # Structural diff layer — Phase 3
@@ -97,8 +97,8 @@ class Change:
     op: str
     from_: Any = field(default=None)
     to: Any = field(default=None)
-    fields: Optional[list[dict]] = field(default=None)
-    detail: Optional[dict] = field(default=None)
+    fields: list[dict] | None = field(default=None)
+    detail: dict | None = field(default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -177,12 +177,12 @@ class RenameMap:
 
     classes: dict[str, str]
     properties: dict[tuple[str, str], str]
-    entry_class_resolution: list[Optional[str]] = field(default_factory=list)
-    entry_prop_resolution: list[Optional[tuple[str, str]]] = field(
+    entry_class_resolution: list[str | None] = field(default_factory=list)
+    entry_prop_resolution: list[tuple[str, str] | None] = field(
         default_factory=list
     )
-    class_fate: dict[str, Optional[str]] = field(default_factory=dict)
-    prop_fate: dict[tuple[str, str], Optional[str]] = field(default_factory=dict)
+    class_fate: dict[str, str | None] = field(default_factory=dict)
+    prop_fate: dict[tuple[str, str], str | None] = field(default_factory=dict)
 
     def class_current_name(self, baseline_class_name: str) -> str:
         """Return the current name of a class given its baseline identity.
@@ -282,22 +282,22 @@ def _replay_identities(baseline: dict, change_log: list[dict]) -> RenameMap:
     #   baseline_name: the entity's name at baseline, or None if born later.
     #   final_name: its current live name, or None once deleted.
     next_id = 0
-    class_baseline_name: dict[int, Optional[str]] = {}
-    class_final_name: dict[int, Optional[str]] = {}
+    class_baseline_name: dict[int, str | None] = {}
+    class_final_name: dict[int, str | None] = {}
     # Live "current class name -> class identity"; only currently-alive classes.
     class_live: dict[str, int] = {}
 
     # Property identities are scoped by their owning CLASS IDENTITY, so a class
     # rename (which never changes the class identity) leaves them untouched.
-    prop_baseline_name: dict[int, Optional[str]] = {}
-    prop_final_name: dict[int, Optional[str]] = {}
+    prop_baseline_name: dict[int, str | None] = {}
+    prop_final_name: dict[int, str | None] = {}
     # (class_id) -> {current prop name -> prop identity} for alive properties.
     prop_live: dict[int, dict[str, int]] = {}
     # prop identity -> owning class identity, for EVERY property (alive or
     # deleted), so a deleted property's baseline scope key can still be derived.
     prop_owner: dict[int, int] = {}
 
-    def mint_class(name: str, baseline_name: Optional[str]) -> int:
+    def mint_class(name: str, baseline_name: str | None) -> int:
         nonlocal next_id
         cid = next_id
         next_id += 1
@@ -307,7 +307,7 @@ def _replay_identities(baseline: dict, change_log: list[dict]) -> RenameMap:
         prop_live[cid] = {}
         return cid
 
-    def mint_prop(class_id: int, name: str, baseline_name: Optional[str]) -> int:
+    def mint_prop(class_id: int, name: str, baseline_name: str | None) -> int:
         nonlocal next_id
         pid = next_id
         next_id += 1
@@ -330,8 +330,8 @@ def _replay_identities(baseline: dict, change_log: list[dict]) -> RenameMap:
             mint_prop(cid, pname, baseline_name=pname)
 
     # ---- Replay the op-log, capturing per-position resolutions -------------
-    entry_class_resolution: list[Optional[str]] = []
-    entry_prop_resolution: list[Optional[tuple[str, str]]] = []
+    entry_class_resolution: list[str | None] = []
+    entry_prop_resolution: list[tuple[str, str] | None] = []
 
     for entry in change_log:
         op = entry.get("op")
@@ -344,7 +344,7 @@ def _replay_identities(baseline: dict, change_log: list[dict]) -> RenameMap:
         # call-time name is the name as it was when the call was made).  Record
         # the captured identity id; it is mapped to a final name post-replay.
         captured_cid = class_live.get(call_class) if call_class is not None else None
-        captured_pid: Optional[int] = None
+        captured_pid: int | None = None
         if captured_cid is not None and call_prop is not None:
             captured_pid = prop_live.get(captured_cid, {}).get(call_prop)
         # rename_property carries old_prop_name rather than prop_name.
@@ -409,7 +409,7 @@ def _replay_identities(baseline: dict, change_log: list[dict]) -> RenameMap:
     # prop_owner is populated as identities are minted (see mint_prop), so it is
     # complete for deleted properties too.
     classes: dict[str, str] = {}
-    class_fate: dict[str, Optional[str]] = {}
+    class_fate: dict[str, str | None] = {}
     for cid, base_name in class_baseline_name.items():
         if base_name is None:
             continue  # born after baseline — not a baseline identity
@@ -419,7 +419,7 @@ def _replay_identities(baseline: dict, change_log: list[dict]) -> RenameMap:
             classes[base_name] = final
 
     properties: dict[tuple[str, str], str] = {}
-    prop_fate: dict[tuple[str, str], Optional[str]] = {}
+    prop_fate: dict[tuple[str, str], str | None] = {}
     for pid, base_name in prop_baseline_name.items():
         if base_name is None:
             continue  # born after baseline
@@ -435,11 +435,11 @@ def _replay_identities(baseline: dict, change_log: list[dict]) -> RenameMap:
             properties[(owner_base, base_name)] = final
 
     # ---- Map captured per-position identities to final current names -------
-    resolved_class: list[Optional[str]] = [
+    resolved_class: list[str | None] = [
         None if cid is None else class_final_name.get(cid)
         for cid in entry_class_resolution
     ]
-    resolved_prop: list[Optional[tuple[str, str]]] = []
+    resolved_prop: list[tuple[str, str] | None] = []
     for pid in entry_prop_resolution:
         if pid is None:
             resolved_prop.append(None)
@@ -507,8 +507,8 @@ def _diff_properties(
     b_props: list[dict],
     c_props: list[dict],
     class_name: str,
-    rename_map: Optional[RenameMap] = None,
-    current_class_name: Optional[str] = None,
+    rename_map: RenameMap | None = None,
+    current_class_name: str | None = None,
 ) -> list[Change]:
     """Diff two ordered property lists for a single class, by identity.
 
@@ -665,7 +665,7 @@ def _diff_class_fields(b_cls: dict, c_cls: dict) -> list[dict]:
 def _diff(
     baseline: dict,
     current: dict,
-    rename_map: Optional[RenameMap] = None,
+    rename_map: RenameMap | None = None,
 ) -> list[Change]:
     """Compute the net-effect structural delta between two schema dicts.
 
@@ -852,7 +852,7 @@ def _annotate(
     change_log: list[dict],
     baseline: dict,
     current: dict,
-    rename_map: Optional[RenameMap] = None,
+    rename_map: RenameMap | None = None,
 ) -> list[Change]:
     """Layer semantic intent from the op-log onto identity-aware structural Changes.
 
@@ -1035,7 +1035,7 @@ def _annotate(
     for i, ch in enumerate(result):
         by_target.setdefault(ch.target, []).append(i)
 
-    def _index_for(target: str, predicate) -> Optional[int]:
+    def _index_for(target: str, predicate) -> int | None:
         """First live index whose Change has *target* and satisfies *predicate*."""
         for i in by_target.get(target, ()):
             ch = result[i]
@@ -1043,7 +1043,7 @@ def _annotate(
                 return i
         return None
 
-    def _replace(i: int, new_ch: Optional[Change]) -> None:
+    def _replace(i: int, new_ch: Change | None) -> None:
         """Replace result[i], keeping the by_target index consistent."""
         old = result[i]
         if old is not None and (new_ch is None or new_ch.target != old.target):
@@ -1422,7 +1422,7 @@ def _sort_changes(changes: list["Change"]) -> list["Change"]:
     # Phase 2: only within runs that tie on the full primary tuple, refine by the
     # expensive json tie-break.  Runs of size 1 (the common case) skip json
     # entirely.
-    result: list["Change"] = []
+    result: list[Change] = []
     for _, group in groupby(primary_sorted, key=_primary_key):
         run = list(group)
         if len(run) > 1:
@@ -1569,7 +1569,7 @@ class TextChangeRenderer(ChangeRenderer):
         # closures).  Keyed on ``Change.op``; the ``modified`` builder is the
         # fallback for any op not explicitly listed, preserving the old if/elif
         # ladder's terminal ``else`` branch.
-        self._CLASS_HEADERS: dict[str, Callable[["Change"], str]] = {
+        self._CLASS_HEADERS: dict[str, Callable[[Change], str]] = {
             "added": lambda ch: f"+ {ch.target} [new class]",
             "subclass_created": self._subclass_created_header,
             "removed": lambda ch: f"- {ch.target} [removed]",
@@ -1577,7 +1577,7 @@ class TextChangeRenderer(ChangeRenderer):
             "renamed": lambda ch: f"~ {ch.target} [renamed from {ch.from_ or '?'}]",
             "modified": lambda ch: f"~ {ch.target} [modified]",
         }
-        self._PROP_LINES: dict[str, Callable[["Change", str], str]] = {
+        self._PROP_LINES: dict[str, Callable[[Change, str], str]] = {
             "added": lambda pch, name: f"  + {name} [added]",
             "removed": lambda pch, name: f"  - {name} [removed]",
             "renamed": self._renamed_prop_line,
@@ -1593,8 +1593,8 @@ class TextChangeRenderer(ChangeRenderer):
         # Bucket changes by owning class ONCE so each class's full block (its
         # class-level Changes plus its nested property lines) renders inline on
         # first encounter, in the supplied sorted order.
-        class_changes: dict[str, list["Change"]] = {}
-        prop_changes: dict[str, list["Change"]] = {}
+        class_changes: dict[str, list[Change]] = {}
+        prop_changes: dict[str, list[Change]] = {}
         for ch in changes:
             if ch.kind == "class":
                 class_changes.setdefault(ch.target, []).append(ch)
@@ -1628,7 +1628,7 @@ class TextChangeRenderer(ChangeRenderer):
         return ch.target.split(".")[0]
 
     @staticmethod
-    def _summary_header(changes: list["Change"]) -> Optional[str]:
+    def _summary_header(changes: list["Change"]) -> str | None:
         """The ``Schema changes (N):`` header, or ``None`` when there is nothing.
 
         *N* counts one entry per metadata change plus one per distinct owning

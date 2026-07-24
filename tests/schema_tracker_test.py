@@ -11,16 +11,21 @@ The pure diff/annotate/render pipeline that *consumes* the op-log is tested in
 """
 
 import copy
+from typing import ClassVar
+
 import pytest
+
+from datagraphs.enums import DATATYPE, REPORT_FORMAT
+from datagraphs.schema import (
+    ClassNotFoundError,
+    InvalidInversePropertyError,
+    PropertyExistsError,
+    PropertyNotFoundError,
+    SchemaError,
+)
 from datagraphs.schema import (
     Schema as DatagraphsSchema,
-    PropertyExistsError,
-    InvalidInversePropertyError,
-    SchemaError,
-    ClassNotFoundError,
-    PropertyNotFoundError,
 )
-from datagraphs.enums import DATATYPE, REPORT_FORMAT
 
 
 class TestChangeTrackingBaseline:
@@ -40,7 +45,7 @@ class TestChangeTrackingBaseline:
     # mutations made by Schema (which aliases its input dict) cannot leak
     # between tests.
 
-    _NEW_FORMAT_DATA = {
+    _NEW_FORMAT_DATA: ClassVar[dict] = {
         "name": "My Model v1.0",
         "createdDate": "2024-06-01T00:00:00Z",
         "lastModifiedDate": "2024-06-01T00:00:00Z",
@@ -66,7 +71,7 @@ class TestChangeTrackingBaseline:
         ],
     }
 
-    _LEGACY_FORMAT_DATA = {
+    _LEGACY_FORMAT_DATA: ClassVar[dict] = {
         "id": "urn:models:999",
         "guid": "999",
         "type": "DomainModel",
@@ -263,7 +268,7 @@ class TestChangeTrackingRecording:
     # below so that mutations (Schema aliases its input dict) cannot leak
     # between tests.
 
-    _BASE_DATA = {
+    _BASE_DATA: ClassVar[dict] = {
         "name": "Test Model v1.0",
         "createdDate": "2024-01-01T00:00:00Z",
         "lastModifiedDate": "2024-01-01T00:00:00Z",

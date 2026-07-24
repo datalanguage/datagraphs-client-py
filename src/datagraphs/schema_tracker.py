@@ -22,8 +22,8 @@ that dict (the ``create_from`` path), keeping the reference current.
 
 import copy
 import json
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator, Optional
 
 
 class ChangeTracker:
@@ -50,9 +50,9 @@ class ChangeTracker:
         self._tracking_depth: int = 0
         # Atomic-rollback transaction state (non-None only inside an outermost
         # `atomic`): the reverse-replayed undo journal and its id() dedupe sets.
-        self._undo: Optional[list[tuple]] = None
-        self._staged_classes: Optional[set[int]] = None
-        self._staged_props: Optional[set[int]] = None
+        self._undo: list[tuple] | None = None
+        self._staged_classes: set[int] | None = None
+        self._staged_props: set[int] | None = None
         self._baseline: dict = self._capture_baseline(schema_dict)
 
     @property
