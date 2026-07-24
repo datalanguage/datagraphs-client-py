@@ -71,7 +71,16 @@ class Dataset:
     @property
     def slug(self) -> str:
         """The slug portion of the dataset ID."""
-        return self.id[self.id.rfind(':') + 1:]
+        return Dataset.get_slug_from_id(self.id)
+
+    @staticmethod
+    def get_slug_from_id(id: str) -> str:
+        """Extract the slug from a dataset ID.
+
+        :param id: The dataset ID (e.g. ``'urn:project:dataset-slug'``).
+        :returns: The slug portion of the dataset ID.
+        """
+        return id[id.rfind(':') + 1:]
 
     def _sanitise_name(self, value: str) -> str:
         return value.lower().replace(" ", "-")

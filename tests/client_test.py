@@ -3,6 +3,7 @@ import logging
 import pytest
 from datagraphs.client import Client as DatagraphsClient, AuthenticationError, DatagraphsError
 from datagraphs.schema import Schema as DatagraphsSchema
+from datagraphs.enums import SCHEMA_APPLY_MODE
 from datagraphs.dataset import Dataset
 
 TOKEN_TYPE = 'Bearer'
@@ -387,6 +388,63 @@ class TestDataModification:
         assert kwargs['headers']['Authorization'] == "Bearer test_token"
 
 class TestSchemaOperations:
+
+    SCHEMA_DATA = {
+        "name": "Domain Model",
+        "createdDate": "2024-06-01T00:00:00Z",
+        "lastModifiedDate": "2024-06-01T00:00:00Z",
+        "classes": []
+    }
+
+    SCHEMA_VALIDATION_ERROR_RESPONSE = {
+        "statusCode": 400,
+        "error": "Bad Request",
+        "message": "Validation failed",
+        "errors": [
+            {
+                "message": "Cannot change isLangString of property \"internalLabel\" from \"ActiveIngredientTotalDosageExpression\" as data exists for class",
+                "class": "ActiveIngredientTotalDosageExpression",
+                "code": "DATA_EXISTS",
+                "property": "internalLabel",
+                "types": [
+                    {
+                        "type": "DirectionForUse",
+                        "datasets": [
+                            "urn:croplife-dlc:registered-formulation"
+                        ]
+                    }
+                ]
+            },
+            {
+                "message": "Cannot change isNestedObject of property \"impactedCrop\" from \"AdverseEffect\" as data exists for class",
+                "class": "AdverseEffect",
+                "code": "DATA_EXISTS",
+                "property": "impactedCrop",
+                "types": [
+                    {
+                        "type": "RegisteredFormulation",
+                        "datasets": [
+                            "urn:croplife-dlc:registered-formulation"
+                        ]
+                    }
+                ]
+            },
+            {
+                "message": "Cannot change parentClass of \"AngleUnit\" as it is in use by a dataset",
+                "class": "AngleUnit",
+                "code": "IN_USE_BY_DATASET",
+                "attribute": "parentClass",
+                "types": [
+                    {
+                        "type": "RegisteredFormulation",
+                        "datasets": [
+                            "urn:croplife-dlc:registered-formulation"
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
     
     @pytest.fixture(scope="function",autouse=True)
     def setup(self, get_client):
@@ -404,21 +462,71 @@ class TestSchemaOperations:
         args, kwargs = self.client._http_client.request.call_args
         assert args[1].startswith("https://api.datagraphs.io/test_project/models/_active?")
 
+    def test_should_validate_schema_apply_via_dry_run(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 400, self.SCHEMA_VALIDATION_ERROR_RESPONSE)
+        resp = self.client.apply_schema(DatagraphsSchema.create_from(self.SCHEMA_DATA), SCHEMA_APPLY_MODE.VALIDATE_ONLY)
+        args, kwargs = self.client._http_client.request.call_args
+        assert args[0] == "put"
+        assert args[1].startswith("https://api.datagraphs.io/test_project/models/_active?dryRun=true")
+        sent_data = json.loads(kwargs['data'])
+        assert sent_data['name'] == self.SCHEMA_DATA['name']
+        assert sent_data['classes'] == []
+        assert resp == self.SCHEMA_VALIDATION_ERROR_RESPONSE["errors"]
+
     def test_should_apply_schema_to_project(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200)
-        schema_data = {
-            "name": "Domain Model",
-            "createdDate": "2024-06-01T00:00:00Z",
-            "lastModifiedDate": "2024-06-01T00:00:00Z",
-            "classes": []
-        }
-        self.client.apply_schema(DatagraphsSchema.create_from(schema_data))
+        self.client.apply_schema(DatagraphsSchema.create_from(self.SCHEMA_DATA))
         args, kwargs = self.client._http_client.request.call_args
         assert args[0] == "put"
         assert args[1].startswith("https://api.datagraphs.io/test_project/models/_active")
         sent_data = json.loads(kwargs['data'])
-        assert sent_data['name'] == schema_data['name']
+        assert sent_data['name'] == self.SCHEMA_DATA['name']
         assert sent_data['classes'] == []
+
+    def test_should_raise_exception_when_schema_application_fails(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 400, self.SCHEMA_VALIDATION_ERROR_RESPONSE)
+        with pytest.raises(DatagraphsError):
+            self.client.apply_schema(DatagraphsSchema.create_from(self.SCHEMA_DATA))
+            args, kwargs = self.client._http_client.request.call_args
+            assert args[0] == "put"
+            assert args[1].startswith("https://api.datagraphs.io/test_project/models/_active")
+            sent_data = json.loads(kwargs['data'])
+            assert sent_data['name'] == self.SCHEMA_DATA['name']
+            assert sent_data['classes'] == []
+
+    def test_should_resolve_dependencies_when_forcing_schema_update(self, mocker):
+        datasets_response = {
+            "results": [{
+                "id": "urn:croplife-dlc:registered-formulation",
+                "name": "Registered Formulation",
+                "classes": ["RegisteredFormulation", "DirectionForUse"]
+            }]
+        }
+        base = "https://api.datagraphs.io/test_project"
+        expected_calls = {
+            "initial apply reports the blocking dependencies":  ("put",    f"{base}/models/_active", create_response_mock(mocker, 400, self.SCHEMA_VALIDATION_ERROR_RESPONSE)),
+            "clear DirectionForUse entities from the dataset":  ("delete", f"{base}/registered-formulation?filter=DirectionForUse", create_response_mock(mocker, 200, None)),
+            "clear RegisteredFormulation entities from the dataset": ("delete", f"{base}/registered-formulation?filter=RegisteredFormulation", create_response_mock(mocker, 200, None)),
+            "look up which datasets reference the dropped classes": ("get",  f"{base}/?pageSize=", create_response_mock(mocker, 200, datasets_response)),
+            "update the dataset to detach the dropped classes":  ("put",    f"{base}/datasets/registered-formulation", create_response_mock(mocker, 200, None)),
+            "re-apply the schema now that dependencies are cleared": ("put", f"{base}/models/_active", create_response_mock(mocker, 200, None)),
+        }
+        self.client._http_client.request.side_effect = [response for (_, _, response) in expected_calls.values()]
+        self.client.apply_schema(DatagraphsSchema.create_from(self.SCHEMA_DATA), SCHEMA_APPLY_MODE.FORCE)
+        actual_calls = self.client._http_client.request.call_args_list
+        assert len(actual_calls) == len(expected_calls)
+        for i, ((step, (method, url_prefix, _response)), call) in enumerate(zip(expected_calls.items(), actual_calls)):
+            assert call.args[0] == method, f"call {i} ({step}): expected method {method!r}, got {call.args[0]!r}"
+            assert call.args[1].startswith(url_prefix), f"call {i} ({step}): expected URL prefix {url_prefix!r}, got {call.args[1]!r}"
+
+    def test_should_get_dependencies_for_schema_update(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 400, self.SCHEMA_VALIDATION_ERROR_RESPONSE)
+        classes_to_clear, classes_to_drop = self.client.get_schema_update_dependencies(DatagraphsSchema.create_from(self.SCHEMA_DATA))
+        args, kwargs = self.client._http_client.request.call_args
+        assert args[0] == "put"
+        assert args[1].startswith("https://api.datagraphs.io/test_project/models/_active?dryRun=true")
+        assert classes_to_clear == [('DirectionForUse', 'registered-formulation'), ('RegisteredFormulation', 'registered-formulation')]
+        assert classes_to_drop == [('RegisteredFormulation', 'registered-formulation')]
 
 class TestDatasetOperations:
 

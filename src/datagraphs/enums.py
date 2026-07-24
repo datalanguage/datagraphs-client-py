@@ -30,3 +30,8 @@ class REPORT_FORMAT(StrEnum):
     """Enumeration of output formats for a schema change report."""
     TEXT = 'text'
     RECORDS = 'records'
+
+class SCHEMA_APPLY_MODE(StrEnum):
+    VALIDATE_ONLY = 'validate'
+    APPLY = 'apply'
+    FORCE = 'force'

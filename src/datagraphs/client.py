@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any, Union
 from datagraphs.schema import Schema as DatagraphsSchema
 from datagraphs.dataset import Dataset
-from datagraphs.enums import HTTP
+from datagraphs.enums import HTTP, SCHEMA_APPLY_MODE
 
 _logger = logging.getLogger(__name__)
 
@@ -53,6 +53,8 @@ class Client:
     _PROD_URL = "https://api.datagraphs.io/"
     _AUTH_URL_SUFFIX = "oauth/token"
 
+    _ALL_TYPES_FILTER = "_all"
+
     DEFAULT_BATCH_SIZE = 100
     DEFAULT_WAIT_TIME_MS = 200
     _DEFAULT_FACET_SIZE = 10
@@ -63,10 +65,15 @@ class Client:
     _HTTP_OK = 200
     _HTTP_CREATED = 201
     _HTTP_NO_CONTENT = 204
+    _HTTP_BAD_REQUEST = 400
     _HTTP_UNAUTHORIZED = 401
     _HTTP_FORBIDDEN = 403
+    _HTTP_NOT_FOUND = 404
     _HTTP_GATEWAY_TIMEOUT = 504
     _DEFAULT_DATASETS_PAGE_SIZE = 1000
+
+    _DATA_EXISTS = "DATA_EXISTS"
+    _IN_USE_BY_DATASET = "IN_USE_BY_DATASET"
 
     def __init__(
         self, 
@@ -160,10 +167,11 @@ class Client:
             if 'headers' in kwargs and method in [HTTP.PUT, HTTP.POST]:
                 kwargs['headers']['Content-Type'] = 'application/json'            
             response = self._http_client.request(str(method), url, **kwargs)
-            if response.status_code in [self._HTTP_OK, self._HTTP_CREATED, self._HTTP_NO_CONTENT]:
-                if method == HTTP.GET:
+            if response.status_code in [self._HTTP_OK, self._HTTP_CREATED, self._HTTP_NO_CONTENT, self._HTTP_BAD_REQUEST]:
+                if method == HTTP.GET or response.status_code == self._HTTP_BAD_REQUEST:
                     return response.json()
-                return None
+                else:
+                    return {}
             elif response.status_code == self._HTTP_GATEWAY_TIMEOUT:
                 _logger.warning("%s - %s: continuing processing, but try a smaller batch size...", response.reason, response.text)
                 return {}
@@ -453,15 +461,75 @@ class Client:
         url = f'{self._base_url}{class_name}/{entity_id}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
-
-    def apply_schema(self, schema: DatagraphsSchema) -> None:
+    def apply_schema(self, schema: DatagraphsSchema, mode: SCHEMA_APPLY_MODE = SCHEMA_APPLY_MODE.APPLY) -> None | List[Dict[str, Any]]:
         """Apply a schema to the project, replacing the currently active domain model.
 
         :param schema: The schema to apply.
         """
         _logger.info('Applying schema to project: %s', self.project_name)
-        url = f'{self._base_url}models/_active'
-        self._request(HTTP.PUT, url, data=schema.to_json(), headers=self._get_headers())
+        url = f'{self._base_url}models/_active'+(f'?dryRun=true' if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY else '')
+        resp = self._request(HTTP.PUT, url, data=schema.to_json(), headers=self._get_headers())
+        if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY:
+            return resp["errors"] if "errors" in resp else []
+        if "errors" in resp and len(resp["errors"]) > 0:
+            if mode == SCHEMA_APPLY_MODE.FORCE:
+                self._resolve_schema_update_dependencies(resp["errors"])
+                self.apply_schema(schema, mode=SCHEMA_APPLY_MODE.APPLY)
+            else:
+                _logger.error('Schema application failed with errors: %s', resp["errors"])
+                raise DatagraphsError(f'Schema application failed with errors: {resp["errors"]}')
+
+    def _resolve_schema_update_dependencies(self, dependencies: List[Dict]) -> None:
+        """Resolve schema update dependencies by clearing or dropping classes as needed.
+        :param dependencies: The list of schema update dependencies.
+        """
+        _logger.info('Resolving schema update dependencies: %s', dependencies)
+        classes_to_clear, classes_to_drop = self._identify_schema_update_dependencies(dependencies)
+        self._remove_schema_update_dependencies(classes_to_clear, classes_to_drop)
+
+    def _identify_schema_update_dependencies(self, dependencies: List[Dict]) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+        """Identify classes that need to be cleared or dropped based on the new schema.
+
+        :param dependencies: The list of schema update dependencies.
+        :returns: A tuple containing two sets:
+            - Classes to clear (set of (class_name, dataset_slug))
+            - Classes to drop (set of (class_name, dataset_slug))
+        """
+        classes_to_clear: set[tuple[str, str]] = set()
+        classes_to_drop: set[tuple[str, str]] = set()
+        for issue in dependencies:
+            for type_info in issue.get("types", []):
+                code = issue.get("code")
+                class_name = type_info.get("type")
+                for dataset_urn in type_info.get("datasets", []):
+                    class_data = (class_name, Dataset.get_slug_from_id(dataset_urn))
+                    if code == self._DATA_EXISTS:
+                        classes_to_clear.add(class_data)
+                    elif code == self._IN_USE_BY_DATASET:
+                        classes_to_clear.add(class_data)
+                        classes_to_drop.add(class_data)
+                    else:
+                        _logger.warning('Unknown schema update dependency code: %s', code)
+        return sorted(classes_to_clear), sorted(classes_to_drop)
+
+    def _remove_schema_update_dependencies(self, classes_to_clear: set[tuple[str, str]], classes_to_drop: set[tuple[str, str]]) -> None:
+        for class_name, dataset_slug in classes_to_clear:
+            self.clear_class_from_dataset(dataset_slug, class_name)
+        for class_name, dataset_slug in classes_to_drop:
+            self.drop_class_from_dataset(dataset_slug, class_name)
+
+    def get_schema_update_dependencies(self, schema: DatagraphsSchema) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+        """Get the schema update dependencies for a new schema.
+
+        :param schema: The new schema to check.
+        :returns: A tuple containing two sets:
+            - Classes to clear (set of (class_name, dataset_slug))
+            - Classes to drop (set of (class_name, dataset_slug))
+        """
+        dependencies = self.apply_schema(schema, mode=SCHEMA_APPLY_MODE.VALIDATE_ONLY)
+        if dependencies:
+            return self._identify_schema_update_dependencies(dependencies)
+        return set(), set()
 
     def get_schema(self) -> DatagraphsSchema:
         """Retrieve the active schema for the project.
@@ -483,6 +551,15 @@ class Client:
         if len(data) >= self._DEFAULT_DATASETS_PAGE_SIZE:
             _logger.warning('Dataset results (%d) may have been truncated at page size limit (%d)', len(data), self._DEFAULT_DATASETS_PAGE_SIZE)
         return [Dataset.create_from(item) for item in data]
+
+    def get_dataset(self, dataset_slug: str) -> Optional[Dataset]:
+        """Retrieve a specific dataset by slug.
+
+        :param dataset_slug: The slug of the dataset to retrieve.
+        :returns: A `Dataset` object if found, otherwise ``None``.
+        """
+        datasets = self.get_datasets()
+        return next((d for d in datasets if d.slug == dataset_slug), None)
 
     def apply_datasets(self, datasets: List[Dataset], timeout_ms: int=_DATASETS_TIMEOUT_MS) -> None:
         """Create or update datasets so they match the supplied list.
@@ -510,10 +587,10 @@ class Client:
         count = 1
         _logger.info('Verifying all datasets have been applied successfully...')
         while len(self.get_datasets()) != len(datasets):
-            if (count * self.wait_time_ms) < timeout_ms:
+            if (count * self._wait_time_ms) < timeout_ms:
                 _logger.info('Waiting for datasets to be applied...')
                 count += 1
-                time.sleep(self.wait_time_ms / 1000)
+                time.sleep(self._wait_time_ms / 1000)
             else:
                 _logger.error('Failed to apply datasets within timeout.')
                 raise DatagraphsError('Failed to apply datasets within timeout.')
@@ -526,7 +603,6 @@ class Client:
         """
         url = f'{self._base_url}datasets'
         self._request(HTTP.POST, url, json=dataset.to_dict(), headers=self._get_headers())
-
 
     def update_dataset(self, dataset: Dataset) -> None:
         """Update an existing dataset.
@@ -541,8 +617,16 @@ class Client:
 
         :param dataset_slug: The slug of the dataset to clear.
         """
-        _logger.info('Clearing down data from dataset: %s', dataset_slug)
-        url = f'{self._base_url}{dataset_slug}?filter=_all'
+        self.clear_class_from_dataset(dataset_slug, self._ALL_TYPES_FILTER)
+
+    def clear_class_from_dataset(self, dataset_slug: str, class_name: str) -> None:
+        """Delete all data of a specific class from a dataset, keeping the dataset itself intact.
+
+        :param dataset_slug: The slug of the dataset to clear.
+        :param class_name: The name of the class to clear from the dataset.
+        """
+        _logger.info('Clearing down data of type %s from dataset: %s', class_name, dataset_slug)
+        url = f'{self._base_url}{dataset_slug}?filter={class_name}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
     def drop_dataset(self, dataset_slug: str) -> None:
@@ -553,6 +637,23 @@ class Client:
         _logger.info('Dropping dataset: %s', dataset_slug)
         url = f'{self._base_url}datasets/{dataset_slug}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
+
+    def drop_class_from_dataset(self, dataset_slug: str, class_name: str) -> None:
+        """Remove the specified class from a dataset, deleting all data of that class.
+
+        :param dataset_slug: The slug of the dataset to update.
+        :param class_name: The name of the class to drop from the dataset.
+        """
+        dataset = self.get_dataset(dataset_slug)
+        if dataset is not None:
+            if class_name in dataset.classes:
+                _logger.info('Dropping class %s from dataset: %s', class_name, dataset_slug)
+                dataset.classes.remove(class_name)
+                self.update_dataset(dataset)
+            else:
+                _logger.warning('Class %s not found in dataset: %s', class_name, dataset_slug)
+        else:
+            raise DatagraphsError(f'Dataset {dataset_slug} not found in project {self.project_name}')
 
     def tear_down(self, drop_datasets: bool = True) -> None:
         """Remove all datasets and their data from the project.
