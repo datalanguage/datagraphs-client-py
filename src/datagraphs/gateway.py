@@ -7,7 +7,7 @@ from pathlib import Path
 
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
-from datagraphs.enums import VALIDATION_MODE
+from datagraphs.enums import VALIDATION_MODE, SCHEMA_APPLY_MODE
 from datagraphs.schema import Schema
 from datagraphs.utils import get_project_from_urn, map_project_name
 
@@ -42,8 +42,7 @@ class Gateway:
     def load_project(self, schema: Schema, datasets: list[Dataset], validation_mode: VALIDATION_MODE = VALIDATION_MODE.PROMPT) -> None:
         """Deploy the project schema and datasets to the API.
 
-        Tears down existing datasets before applying the new schema and
-        datasets.
+        N.B. This deletes and/or removes all blocking data dependencies before applying the new schema and datasets.
 
         :param schema: The schema to deploy.
         :param datasets: The datasets to deploy.
@@ -53,17 +52,10 @@ class Gateway:
         """
         if self._validate_datasets(datasets, self._client.get_datasets(), validation_mode):
             try:
-                self._teardown_and_load_project(schema, datasets, hard_teardown=False)
-            except Exception as e:  # noqa: BLE001 - intentional: any soft-teardown failure triggers the hard-teardown fallback below
+                self._client.apply_schema(schema, mode=SCHEMA_APPLY_MODE.FORCE)
+                self._client.apply_datasets(datasets)
+            except Exception as e:  
                 _logger.error('Error loading project: %s', str(e))
-                _logger.info('Applying hard teardown and attempting to redeploy...')
-                self._teardown_and_load_project(schema, datasets, hard_teardown=True)
-
-    def _teardown_and_load_project(self, schema: Schema, datasets: list[Dataset], hard_teardown: bool = False) -> None:
-        """Tear down existing datasets and deploy the provided schema and datasets."""
-        self._client.tear_down(drop_datasets=hard_teardown)
-        self._client.apply_schema(schema)
-        self._client.apply_datasets(datasets)
 
     def _validate_datasets(self, deployment_datasets: list[Dataset], existing_datasets: list[Dataset], validation_mode: VALIDATION_MODE) -> None:
         if self._is_empty_project(existing_datasets):
