@@ -586,7 +586,7 @@ class Client:
     def _assert_datasets_applied(self, datasets: list[Dataset], timeout_ms: int) -> None:
         count = 1
         _logger.info('Verifying all datasets have been applied successfully...')
-        while len(self.get_datasets()) != len(datasets):
+        while not self._datasets_match(self.get_datasets(), datasets):
             if (count * self._wait_time_ms) < timeout_ms:
                 _logger.info('Waiting for datasets to be applied...')
                 count += 1
@@ -595,7 +595,22 @@ class Client:
                 _logger.error('Failed to apply datasets within timeout.')
                 raise DatagraphsError('Failed to apply datasets within timeout.')
         _logger.info('All datasets have been applied successfully.')
-                
+
+    def _datasets_match(self, datasets_a: list[Dataset], datasets_b: list[Dataset]) -> bool:
+        """Check if two lists of datasets match by slug and content.
+
+        :param datasets_a: First list of datasets.
+        :param datasets_b: Second list of datasets.
+        :returns: ``True`` if the lists match, otherwise ``False``.
+        """
+        if len(datasets_a) != len(datasets_b):
+            return False
+        for dataset_a in datasets_a:
+            match = next((d for d in datasets_b if d.slug == dataset_a.slug), None)
+            if match is None or sorted(match.classes) != sorted(dataset_a.classes):
+                return False
+        return True
+
     def create_dataset(self, dataset: Dataset) -> None:
         """Create a new dataset.
 
