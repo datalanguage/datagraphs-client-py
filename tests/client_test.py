@@ -556,7 +556,7 @@ class TestDatasetOperations:
             create_response_mock(mocker, 200, get_search_response(new_datasets))
         ]
         datasets = [Dataset(name='1', project='ds'), Dataset(name='2', project='ds')]
-        self.client.apply_datasets(datasets, timeout_ms=500)
+        self.client.apply_datasets(datasets, timeout_s=0.5)
         args, kwargs = self.client._http_client.request.call_args_list[1]
         assert args[0] == "post"
         assert args[1].startswith("https://api.datagraphs.io/test_project/datasets")
@@ -569,7 +569,7 @@ class TestDatasetOperations:
     def test_should_update_datasets_when_applying_existing_datasets(self, mocker):
         datasets = [Dataset(name='1', project='ds'), Dataset(name='2', project='ds')]
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))
-        self.client.apply_datasets(datasets, timeout_ms=5)
+        self.client.apply_datasets(datasets, timeout_s=5)
         args, kwargs = self.client._http_client.request.call_args_list[1]
         assert args[0] == "put"
         assert args[1].startswith("https://api.datagraphs.io/test_project/datasets/1")
@@ -588,7 +588,34 @@ class TestDatasetOperations:
         ]
         datasets = [Dataset(name='1', project='ds'), Dataset(name='2', project='ds')]
         with pytest.raises(DatagraphsError):
-            self.client.apply_datasets(datasets, timeout_ms=0)
+            self.client.apply_datasets(datasets, timeout_s=0)
+
+    def test_should_back_off_poll_interval_on_schedule_while_waiting_for_datasets(self, mocker):
+        # Observe the real waits between polls through the public apply_datasets():
+        # every 1s for the first 10s, every 2s for the next 20s, then every 5s
+        # until the timeout. A virtual clock advanced by each (mocked) sleep makes
+        # the schedule deterministic with no real waiting and no reach into privates.
+        clock = [0.0]
+        poll_waits = []
+
+        def fake_sleep(seconds):
+            if seconds > 0:  # ignore the unrelated per-write pause (set to 0 below)
+                poll_waits.append(seconds)
+            clock[0] += seconds
+
+        mocker.patch('datagraphs.client.time.sleep', side_effect=fake_sleep)
+        mocker.patch('datagraphs.client.time.monotonic', side_effect=lambda: clock[0])
+
+        # Datasets never report as applied, so polling continues until the timeout.
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([]))
+        self.client.set_wait_time(0)
+
+        datasets = [Dataset(name='1', project='ds'), Dataset(name='2', project='ds')]
+        with pytest.raises(DatagraphsError):
+            self.client.apply_datasets(datasets, timeout_s=40)
+
+        # 0-10s: 1s x10  |  10-30s: 2s x10  |  30-40s: 5s x2 (then the 40s timeout fires)
+        assert poll_waits == [1] * 10 + [2] * 10 + [5] * 2
 
     def test_should_delete_data_from_dataset(self, mocker):
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, get_search_response([{'name': '1', 'project': 'ds'}, {'name': '2', 'project': 'ds'}]))

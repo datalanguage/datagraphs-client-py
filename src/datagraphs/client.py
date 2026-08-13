@@ -59,8 +59,16 @@ class Client:
     DEFAULT_WAIT_TIME_MS = 200
     _DEFAULT_FACET_SIZE = 10
     _MAX_AUTH_RETRIES = 2
-    _DATASETS_TIMEOUT_MS = 30000
-    
+    _DATASETS_TIMEOUT_S = 300
+
+    # Polling backoff for confirming dataset application. Each pair is
+    # (elapsed-time threshold in seconds, poll interval in seconds while below
+    # that threshold); past the final threshold, _POLL_SLOW_INTERVAL_S applies
+    # until the timeout. This yields: every 1s for the first 10s, every 2s for
+    # the next 20s, then every 5s.
+    _POLL_SCHEDULE = ((10, 1), (30, 2))
+    _POLL_SLOW_INTERVAL_S = 5
+
     # HTTP status codes
     _HTTP_OK = 200
     _HTTP_CREATED = 201
@@ -561,14 +569,14 @@ class Client:
         datasets = self.get_datasets()
         return next((d for d in datasets if d.slug == dataset_slug), None)
 
-    def apply_datasets(self, datasets: list[Dataset], timeout_ms: int=_DATASETS_TIMEOUT_MS) -> None:
+    def apply_datasets(self, datasets: list[Dataset], timeout_s: float=_DATASETS_TIMEOUT_S) -> None:
         """Create or update datasets so they match the supplied list.
 
         New datasets are created; existing datasets with changes are updated.
         Waits for confirmation that all datasets have been applied.
 
         :param datasets: Datasets to apply.
-        :param timeout_ms: Maximum time in milliseconds to wait for the API to
+        :param timeout_s: Maximum time in seconds to wait for the API to
             confirm all datasets are applied.
         :raises DatagraphsError: If datasets are not applied within the timeout.
         """
@@ -581,20 +589,41 @@ class Client:
             elif match != dataset:
                 self.update_dataset(dataset)
             time.sleep(self._wait_time_ms / 1000)
-        self._assert_datasets_applied(datasets, timeout_ms)
+        self._assert_datasets_applied(datasets, timeout_s)
 
-    def _assert_datasets_applied(self, datasets: list[Dataset], timeout_ms: int) -> None:
-        count = 1
+    def _assert_datasets_applied(self, datasets: list[Dataset], timeout_s: float) -> None:
+        """Poll the API until the applied datasets match *datasets* or *timeout_s* elapses.
+
+        Polling backs off on the schedule described by ``_POLL_SCHEDULE``: every
+        1s for the first 10s, every 2s for the next 20s, then every 5s.
+
+        :param datasets: The datasets expected to be applied.
+        :param timeout_s: Maximum time in seconds to wait for confirmation.
+        :raises DatagraphsError: If the datasets are not applied within the timeout.
+        """
         _logger.info('Verifying all datasets have been applied successfully...')
+        start = time.monotonic()
         while not self._datasets_match(self.get_datasets(), datasets):
-            if (count * self._wait_time_ms) < timeout_ms:
-                _logger.info('Waiting for datasets to be applied...')
-                count += 1
-                time.sleep(self._wait_time_ms / 1000)
-            else:
+            elapsed_s = time.monotonic() - start
+            remaining_s = timeout_s - elapsed_s
+            if remaining_s <= 0:
                 _logger.error('Failed to apply datasets within timeout.')
                 raise DatagraphsError('Failed to apply datasets within timeout.')
+            _logger.info('Waiting for datasets to be applied...')
+            # Never sleep past the deadline, so the timeout is honoured precisely.
+            time.sleep(min(self._poll_interval(elapsed_s), remaining_s))
         _logger.info('All datasets have been applied successfully.')
+
+    def _poll_interval(self, elapsed_s: float) -> float:
+        """Select the poll interval for a given elapsed time, per ``_POLL_SCHEDULE``.
+
+        :param elapsed_s: Seconds elapsed since polling began.
+        :returns: The interval in seconds to wait before the next check.
+        """
+        for threshold_s, interval_s in self._POLL_SCHEDULE:
+            if elapsed_s < threshold_s:
+                return interval_s
+        return self._POLL_SLOW_INTERVAL_S
 
     def _datasets_match(self, datasets_a: list[Dataset], datasets_b: list[Dataset]) -> bool:
         """Check if two lists of datasets match by slug and content.

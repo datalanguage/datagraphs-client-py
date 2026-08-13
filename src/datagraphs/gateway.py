@@ -7,7 +7,7 @@ from pathlib import Path
 
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
-from datagraphs.enums import VALIDATION_MODE, SCHEMA_APPLY_MODE
+from datagraphs.enums import SCHEMA_APPLY_MODE, VALIDATION_MODE
 from datagraphs.schema import Schema
 from datagraphs.utils import get_project_from_urn, map_project_name
 
@@ -54,7 +54,7 @@ class Gateway:
             try:
                 self._client.apply_schema(schema, mode=SCHEMA_APPLY_MODE.FORCE)
                 self._client.apply_datasets(datasets)
-            except Exception as e:  
+            except Exception as e:  # noqa: BLE001 - intentional: surface any deploy failure via logging rather than propagating
                 _logger.error('Error loading project: %s', str(e))
 
     def _validate_datasets(self, deployment_datasets: list[Dataset], existing_datasets: list[Dataset], validation_mode: VALIDATION_MODE) -> None:
