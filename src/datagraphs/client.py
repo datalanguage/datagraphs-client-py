@@ -176,7 +176,13 @@ class Client:
                 kwargs['headers']['Content-Type'] = 'application/json'            
             response = self._http_client.request(str(method), url, **kwargs)
             if response.status_code in [self._HTTP_OK, self._HTTP_CREATED, self._HTTP_NO_CONTENT, self._HTTP_BAD_REQUEST]:
-                if method == HTTP.GET or response.status_code == self._HTTP_BAD_REQUEST:
+                if response.status_code == self._HTTP_BAD_REQUEST:
+                    body = response.json() if response.content else {}
+                    if 'message' in body and 'errors' not in body:
+                        return {'errors': [body['message']]}
+                    else:
+                        return body
+                elif method == HTTP.GET:
                     return response.json()
                 else:
                     return {}
@@ -290,7 +296,10 @@ class Client:
                     data.extend(resp['results'])
                 time.sleep(self._wait_time_ms / 1000)
             return data
-        return []
+        elif 'errors' in resp:
+            return resp
+        else:
+            return []
 
     def _get_query_url(self, 
             dataset: str = '_all', 
@@ -453,12 +462,16 @@ class Client:
                 end = min(i + self._batch_size, length)
                 _logger.info('   Loading batch %d-%d of %d entities into dataset %s in repo: %s', i, end, length, dataset, self.project_name)
                 try:
-                    self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=batch, headers=self._get_headers())
+                    resp = self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=batch, headers=self._get_headers())
+                    if resp and 'errors' in resp:
+                        return resp
                 except Exception as e:  # noqa: BLE001 - intentional: log the failed batch and continue loading the rest
                     _logger.error('Error loading batch %d-%d of %d entities into dataset %s: %s', i, end, length, dataset, str(e))
         else:
-            self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=entities, headers=self._get_headers())
-        return length
+            resp = self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=entities, headers=self._get_headers())
+            if resp and 'errors' in resp:
+                return resp
+
 
     def delete(self, class_name: str, entity_id: str) -> None:
         """Delete a single entity by class and ID.
@@ -467,7 +480,9 @@ class Client:
         :param entity_id: The entity identifier.
         """
         url = f'{self._base_url}{class_name}/{entity_id}'
-        self._request(HTTP.DELETE, url, headers=self._get_headers())
+        resp = self._request(HTTP.DELETE, url, headers=self._get_headers())
+        if resp and 'errors' in resp:
+            return resp
 
     def apply_schema(self, schema: DatagraphsSchema, mode: SCHEMA_APPLY_MODE = SCHEMA_APPLY_MODE.APPLY) -> None | list[dict[str, Any]]:
         """Apply a schema to the project, replacing the currently active domain model.

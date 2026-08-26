@@ -38,6 +38,7 @@ def create_response_mock(mocker, status_code: int = 200, data: dict | None = Non
     response_mock = mocker.MagicMock()
     response_mock.status_code = status_code
     response_mock.json.return_value = data if data is not None else {}
+    response_mock.content = json.dumps(data).encode('utf-8') if data is not None else b''
     response_mock.raise_for_status.return_value = None
     response_mock.reason = reason
     response_mock.text = text
@@ -240,6 +241,36 @@ class TestErrorHandling:
         self.client._http_client.request.return_value = response        
         with pytest.raises(DatagraphsError, match='Request failed with status 500'):
             self.client.get('Test')
+
+    def test_should_return_errors_for_bad_get_requests(self, mocker):
+        error_response = { "errors":[
+            "Invalid input data"
+        ]}
+        self.client._http_client.request.return_value = create_response_mock(mocker, 400, data=error_response)
+        res = self.client.get('Test')
+        assert res['errors'] == error_response['errors']
+
+    def test_should_return_errors_for_bad_put_requests(self, mocker):
+        error_response = { "errors":[
+            "Invalid input data"
+        ]}
+        self.client._http_client.request.return_value = create_response_mock(mocker, 400, data=error_response)
+        res = self.client.put('Test', data={'key': 'value'})
+        assert res['errors'] == error_response['errors']
+
+    def test_should_return_errors_for_bad_delete_requests(self, mocker):
+        error_response = { "errors":[
+            "Invalid input data"
+        ]}
+        self.client._http_client.request.return_value = create_response_mock(mocker, 400, data=error_response)
+        res = self.client.delete('Test', entity_id='123')
+        assert res['errors'] == error_response['errors']
+
+    def test_should_return_error_message_from_bad_request(self, mocker):
+        error_response = { "message": "Invalid input data" }
+        self.client._http_client.request.return_value = create_response_mock(mocker, 400, data=error_response)
+        res = self.client.get('Test')
+        assert res['errors'] == [error_response['message']]
 
 # Query Tests
 class TestQuery:
