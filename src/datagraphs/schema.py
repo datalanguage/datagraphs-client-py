@@ -171,6 +171,7 @@ class Schema:
         parent_class_name: str = "",
         label_prop_name: str = "label",
         is_label_prop_lang_string: bool = True,
+        is_abstract: bool = False,
     ) -> None:
         """Create a new class in the schema.
 
@@ -202,7 +203,7 @@ class Schema:
                         "isLabelSynonym": False
                     }
                 ],
-                "isAbstract": False,
+                "isAbstract": is_abstract,
             }
             if description:
                 class_def['description'] = self._make_description(description)
