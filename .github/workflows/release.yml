@@ -74,11 +74,42 @@ jobs:
           echo "version=${new}" >> "$GITHUB_OUTPUT"
           echo "Bumped version: ${current} -> ${new}"
 
+      - name: Promote changelog section
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          section() {
+            awk -v heading="$1" '
+              index($0, heading) == 1 { capture = 1; next }
+              capture && /^## / { exit }
+              capture { print }
+            ' CHANGELOG.md
+          }
+
+          if ! section "## [Unreleased]" | grep -q '[^[:space:]]'; then
+            echo "::warning::CHANGELOG.md [Unreleased] is empty - v${VERSION} will be released with no changelog entries."
+            exit 0
+          fi
+
+          awk -v ver="$VERSION" -v date="$(date -u +%F)" '
+            !promoted && index($0, "## [Unreleased]") == 1 {
+              print
+              print ""
+              print "## [" ver "] - " date
+              promoted = 1
+              next
+            }
+            { print }
+          ' CHANGELOG.md > CHANGELOG.md.tmp
+
+          mv CHANGELOG.md.tmp CHANGELOG.md
+          echo "Promoted [Unreleased] -> [${VERSION}]"
+
       - name: Commit and tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml
+          git add pyproject.toml CHANGELOG.md
           git commit -m "release: v${{ steps.version.outputs.version }}"
           git tag "v${{ steps.version.outputs.version }}"
           git push origin main --tags
@@ -88,3 +119,41 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Prepare release notes
+        id: notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          notes="${RUNNER_TEMP}/release-notes.md"
+
+          # Prefer a section already headed with this version; fall back to Unreleased.
+          extract() {
+            awk -v heading="$1" '
+              index($0, heading) == 1 { capture = 1; next }
+              capture && /^## / { exit }
+              capture { print }
+            ' CHANGELOG.md
+          }
+
+          extract "## [${VERSION}]" > "$notes"
+          if ! grep -q '[^[:space:]]' "$notes"; then
+            extract "## [Unreleased]" > "$notes"
+          fi
+          if ! grep -q '[^[:space:]]' "$notes"; then
+            printf 'No changelog entries recorded for this release.\n' > "$notes"
+          fi
+
+          printf '\n**Install:** `pip install pydatagraphs==%s`\nhttps://pypi.org/project/pydatagraphs/%s/\n' \
+            "$VERSION" "$VERSION" >> "$notes"
+
+          echo "file=${notes}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes-file "${{ steps.notes.outputs.file }}"

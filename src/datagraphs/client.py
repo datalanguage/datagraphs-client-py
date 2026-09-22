@@ -492,15 +492,21 @@ class Client:
         _logger.info('Applying schema to project: %s', self.project_name)
         url = f'{self._base_url}models/_active'+('?dryRun=true' if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY else '')
         resp = self._request(HTTP.PUT, url, data=schema.to_json(), headers=self._get_headers())
-        if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY:
-            return resp.get("errors", [])
-        if "errors" in resp and len(resp["errors"]) > 0:
-            if mode == SCHEMA_APPLY_MODE.FORCE:
-                self._resolve_schema_update_dependencies(resp["errors"])
-                self.apply_schema(schema, mode=SCHEMA_APPLY_MODE.APPLY)
-            else:
-                _logger.error('Schema application failed with errors: %s', resp["errors"])
-                raise DatagraphsError(f'Schema application failed with errors: {resp["errors"]}')
+        errors = resp.get("errors", [])
+
+        if all(isinstance(e, dict) for e in errors):
+            if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY:
+                return errors
+            if len(errors) > 0:
+                if mode == SCHEMA_APPLY_MODE.FORCE:
+                    self._resolve_schema_update_dependencies(errors)
+                    self.apply_schema(schema, mode=SCHEMA_APPLY_MODE.APPLY)
+                else:
+                    _logger.error('Schema application failed with errors: %s', errors)
+                    raise DatagraphsError(f'Schema application failed with errors: { errors }')
+        else:
+            _logger.error('Schema application failed with errors: %s', errors)
+            raise DatagraphsError(f'Schema application failed with errors: { errors }')
 
     def _resolve_schema_update_dependencies(self, dependencies: list[dict]) -> None:
         """Resolve schema update dependencies by clearing or dropping classes as needed.

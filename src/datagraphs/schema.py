@@ -724,7 +724,7 @@ class Schema:
         if is_array is not None:
             self._assign_is_array(prop_def, is_array)
         if datatype is not None:
-            self._assign_datatype(prop_def, datatype, is_nested, is_lang_string)
+            self._assign_datatype(prop_def, datatype, is_nested if is_nested is not None else False, is_lang_string if is_lang_string is not None else True)
         if inverse_of is not None:
             self._assign_inverse_of(prop_def, owner_class_name, inverse_of, datatype)
         if enums is not None:
