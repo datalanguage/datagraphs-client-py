@@ -705,8 +705,7 @@ class TestAtomicity:
 
     def _cascade_with_subclass(self) -> DatagraphsSchema:
         """Parent -> Child cascade plus a Target class carrying a backref whose
-        range is 'Parent', so an inverse_of cascade passes for Parent but raises
-        InvalidInversePropertyError for Child."""
+        range is 'Parent'."""
         s = self._empty()
         s.create_class("Parent")
         s.create_subclass("Child", "d", "Parent")
@@ -714,17 +713,55 @@ class TestAtomicity:
         s.create_property("Target", "backref", "Parent")  # range == "Parent"
         return self._from(s)
 
+    @staticmethod
+    def _inject_property_apply_failure(mocker, predicate) -> None:
+        """Make the per-class property apply raise when *predicate(owner, prop_name)*.
+
+        The failure is INJECTED rather than provoked by input. inverse_of was the only
+        validation resolved against each cascade target's own class name, and since its
+        range check became covariant (a base-class range is valid for every subclass)
+        its verdict is monotonic down the hierarchy: anything valid for the parent is
+        valid for every descendant. No public input can therefore fail on a *later*
+        cascade target, leaving the rollback-after-partial-apply path — the one the
+        atomic guard exists for — without a reachable natural trigger. Patching the
+        seam keeps that guarantee under test; the assertions below remain behavioural
+        (the schema and both report formats, read through the public API).
+        """
+        real = DatagraphsSchema._create_property_on_class
+
+        def maybe_fail(self, class_def, owner_class_name, prop_name, *args, **kwargs):
+            if predicate(owner_class_name, prop_name):
+                raise SchemaError(f"injected failure: {owner_class_name}.{prop_name}")
+            return real(self, class_def, owner_class_name, prop_name, *args, **kwargs)
+
+        mocker.patch.object(DatagraphsSchema, "_create_property_on_class", maybe_fail)
+
+    @staticmethod
+    def _inject_update_apply_failure(mocker, predicate) -> None:
+        """As :meth:`_inject_property_apply_failure`, for the *update* cascade seam."""
+        real = DatagraphsSchema._update_property_on_class
+
+        def maybe_fail(self, class_def, prop_def, owner_class_name, *args, **kwargs):
+            if predicate(owner_class_name, prop_def["name"]):
+                raise SchemaError(f"injected failure: {owner_class_name}.{prop_def['name']}")
+            return real(self, class_def, prop_def, owner_class_name, *args, **kwargs)
+
+        mocker.patch.object(DatagraphsSchema, "_update_property_on_class", maybe_fail)
+
     # ==================================================================
-    # CASCADE create_property — mid-apply InvalidInversePropertyError
+    # CASCADE create_property — mid-apply raise AFTER an earlier target
+    # was already mutated must roll every target back.
     # ==================================================================
 
-    def test_create_cascade_inverse_of_invalid_for_subclass_is_atomic(self):
+    def test_create_cascade_rolls_back_after_a_partial_apply(self, mocker):
         s = self._cascade_with_subclass()
         before = copy.deepcopy(s.to_dict())
 
-        with pytest.raises(InvalidInversePropertyError):
-            s.create_property("Parent", "rel", "Target",
-                              inverse_of="backref", apply_to_subclasses=True)
+        # Parent applies cleanly, then Child raises — so the rollback has real work.
+        self._inject_property_apply_failure(mocker, lambda owner, _prop: owner == "Child")
+
+        with pytest.raises(SchemaError):
+            s.create_property("Parent", "rel", "Target", apply_to_subclasses=True)
 
         self._assert_unchanged_and_silent(s, before)
         # No half-built property dict on Parent OR Child.
@@ -733,17 +770,21 @@ class TestAtomicity:
             assert "rel" not in names, f"{cls} carries a half-built 'rel'"
 
     # ==================================================================
-    # CASCADE update_property — mid-apply InvalidInversePropertyError
+    # CASCADE update_property — mid-apply raise AFTER an earlier target
+    # was already updated must roll every target back.
     # ==================================================================
 
-    def test_update_cascade_inverse_of_invalid_for_subclass_is_atomic(self):
+    def test_update_cascade_rolls_back_after_a_partial_apply(self, mocker):
         s = self._cascade_with_subclass()
         # A valid object property to UPDATE (no inverse yet) on Parent + Child.
         s.create_property("Parent", "rel", "Target", apply_to_subclasses=True)
         s = self._from(s)
         before = copy.deepcopy(s.to_dict())
 
-        with pytest.raises(InvalidInversePropertyError):
+        # Parent updates cleanly, then Child raises — so the rollback has real work.
+        self._inject_update_apply_failure(mocker, lambda owner, _prop: owner == "Child")
+
+        with pytest.raises(SchemaError):
             s.update_property("Parent", "rel", description="NEW DESC",
                               inverse_of="backref", apply_to_subclasses=True)
 
@@ -837,29 +878,29 @@ class TestAtomicity:
         assert "inverseOf" not in rel, "single-class partial write: inverseOf set"
 
     # ==================================================================
-    # create_subclass — a mid-cascade raise (a parent property whose
-    # inverse_of is valid for the parent but NOT for the new subclass)
-    # must leave NO half-built subclass: the compound create_class +
-    # per-property loop is a single all-or-nothing op.
+    # create_subclass — a mid-loop raise must leave NO half-built subclass:
+    # the compound create_class + per-property loop is a single
+    # all-or-nothing op.
     # ==================================================================
 
-    def _subclass_with_invalid_inherited_inverse(self) -> DatagraphsSchema:
-        """Parent carries an object property 'rel' whose inverseOf 'backref'
-        (on Target) has range 'Parent'.  Copying 'rel' onto a NEW subclass
-        re-validates inverseOf against the subclass name and raises, so
-        create_subclass fails mid-loop AFTER create_class already ran."""
+    def _parent_with_two_inherited_properties(self) -> DatagraphsSchema:
+        """Parent carries two object properties, so a failure on the second is
+        raised AFTER create_class and the first property copy have both run."""
         s = self._empty()
         s.create_class("Parent")
         s.create_class("Target")
-        s.create_property("Target", "backref", "Parent")  # backref.range == "Parent"
-        s.create_property("Parent", "rel", "Target", inverse_of="backref")  # valid for Parent
+        s.create_property("Parent", "one", "Target")
+        s.create_property("Parent", "two", "Target")
         return self._from(s)
 
-    def test_create_subclass_midloop_raise_is_atomic(self):
-        s = self._subclass_with_invalid_inherited_inverse()
+    def test_create_subclass_midloop_raise_is_atomic(self, mocker):
+        s = self._parent_with_two_inherited_properties()
         before = copy.deepcopy(s.to_dict())
 
-        with pytest.raises(InvalidInversePropertyError):
+        # 'one' is copied onto the new subclass, then 'two' raises.
+        self._inject_property_apply_failure(mocker, lambda _owner, prop: prop == "two")
+
+        with pytest.raises(SchemaError):
             s.create_subclass("Child", "a child", "Parent")
 
         self._assert_unchanged_and_silent(s, before)

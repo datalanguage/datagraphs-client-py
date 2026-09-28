@@ -600,6 +600,21 @@ class Schema:
             prop_def["isLabelSynonym"] = is_synonym
 
     def _is_valid_inverse_of(self, class_name: str, inverse_of: str, datatype: DATATYPE | str) -> bool:
+        """Validate that *inverse_of* on *datatype* points back at *class_name*.
+
+        The inverse property must be an object property on *datatype* whose range is
+        *class_name* or one of its base classes — a range naming a base class already
+        accepts every instance of *class_name*, so it does point back.
+
+        :param class_name: Name of the class containing the property.
+        :param inverse_of: Name of the inverse property on datatype to validate.
+        :param datatype: Datatype of the property.
+        :return: ``True`` if the inverse property is valid; never returns ``False``,
+            as every invalid case raises.
+        :raises InvalidInversePropertyError: If *datatype* is not a concept, does not
+            exist, or *inverse_of* is missing, is not an object property, or does not
+            point back at *class_name* or one of its base classes.
+        """
         is_valid = False
         if datatype not in DATATYPE:
             class_def = self.find_class(datatype)
@@ -609,8 +624,8 @@ class Schema:
                     raise InvalidInversePropertyError(f"Inverse property '{inverse_of}' not found in class '{datatype}'")
                 elif prop_def.get("type") != "ObjectProperty":
                     raise InvalidInversePropertyError(f"Inverse property '{inverse_of}' in class '{datatype}' has no range defined, expected '{class_name}'")
-                elif prop_def.get("range") != class_name:
-                    raise InvalidInversePropertyError(f"Inverse property '{inverse_of}' in class '{datatype}' does not point back to class '{class_name}'")
+                elif not self._is_valid_inverse_range(prop_def.get("range"), class_name):
+                    raise InvalidInversePropertyError(f"Inverse property '{inverse_of}' in class '{datatype}' does not point back to class '{class_name}' or any of its base classes")
                 else:
                     is_valid = True
             else:
@@ -618,6 +633,18 @@ class Schema:
         else:
             raise InvalidInversePropertyError(f"Inverse property can only be set for properties with concept datatype, not '{datatype}'")
         return is_valid
+
+    def _is_valid_inverse_range(self, range_name: str | None, class_name: str) -> bool:
+        """Is *range_name* an acceptable range for a property pointing back at *class_name*?
+
+        *class_name* itself is valid, and so is any class it descends from: a property
+        whose range is a base class already accepts instances of every subclass, so an
+        inverse pointing at an ancestor does point back at *class_name*. The exact match
+        is tested first so the common case costs nothing.
+        """
+        if range_name == class_name:
+            return True
+        return any(x['name'] == range_name for x in self.find_baseclasses(class_name, recursive=True))
 
     def update_property(
         self,
@@ -648,7 +675,9 @@ class Schema:
         :param is_array: Whether the property holds multiple values.
         :param is_nested: Whether an object property is nested.
         :param is_lang_string: Whether the property supports multiple languages.
-        :param inverse_of: Name of the inverse property on the target class.
+        :param inverse_of: Name of the inverse property on the target class. Validated
+            against *datatype* when one is given, otherwise against the property's
+            existing range, so an inverse can be added without restating the type.
         :param enums: Allowed enumeration values.
         :param is_synonym: Whether this property is a label synonym.
         :param is_filterable: Whether the property is available as a filter.
@@ -656,6 +685,9 @@ class Schema:
             existing subclasses.
         :raises ClassNotFoundError: If the class does not exist.
         :raises PropertyNotFoundError: If the property does not exist.
+        :raises InvalidInversePropertyError: If *inverse_of* does not name an object
+            property on the target class whose range is *class_name* or one of its
+            base classes.
         """
         with self._tracker.track() as outermost, self._tracker.atomic(outermost):
             # Build the by-name and parent->children indices ONCE (FIX round-4 B3):
@@ -726,7 +758,12 @@ class Schema:
         if datatype is not None:
             self._assign_datatype(prop_def, datatype, is_nested if is_nested is not None else False, is_lang_string if is_lang_string is not None else True)
         if inverse_of is not None:
-            self._assign_inverse_of(prop_def, owner_class_name, inverse_of, datatype)
+            # Fall back to the property's existing range when the caller did not
+            # restate the datatype — the same thing the enum branch below does.
+            # Passing the bare parameter meant adding an inverse to an existing
+            # object property always validated against None and raised.
+            effective_datatype = datatype if datatype is not None else prop_def.get("range")
+            self._assign_inverse_of(prop_def, owner_class_name, inverse_of, effective_datatype)
         if enums is not None:
             existing_datatype = prop_def["range"]
             self._assign_enum(prop_def, existing_datatype, enums)
@@ -793,13 +830,76 @@ class Schema:
         """
         return next((x for x in self._schema["classes"] if x['name'] == name), None)
 
-    def find_subclasses(self, baseclass: str) -> list[dict]:
-        """Find all direct subclasses of a given class.
+    def find_subclasses(self, baseclass: str, recursive: bool = False) -> list[dict]:
+        """Find all direct or recursive subclasses of a given class.
 
         :param baseclass: The parent class name.
-        :returns: A list of class dicts whose ``subClassOf`` matches *baseclass*.
+        :param recursive: If ``True``, find all transitive subclasses, not just direct ones.
+        :returns: A list of class dicts descending from *baseclass* — its direct children,
+            or every transitive descendant when *recursive* is ``True``. Empty if
+            *baseclass* has no children or does not exist. Each descendant appears exactly
+            once, and a ``subClassOf`` cycle terminates rather than looping forever.
         """
-        return [x for x in self._schema["classes"] if x.get('subClassOf') == baseclass]
+        subclasses = [x for x in self._schema["classes"] if x.get('subClassOf') == baseclass]
+        if recursive:
+            # One O(C) parent->children index then a single iterative walk, so a deep
+            # subClassOf chain neither recurses nor rescans every class per level.
+            # ``seen`` (seeded with the baseclass) also makes a subClassOf cycle
+            # terminate instead of looping forever.
+            children: dict[str, list[dict]] = {}
+            for class_def in self._schema["classes"]:
+                parent = class_def.get('subClassOf')
+                if parent is not None:
+                    children.setdefault(parent, []).append(class_def)
+
+            seen = {baseclass}
+            seen.update(x['name'] for x in subclasses)
+            queue = list(subclasses)
+            while queue:
+                for child in children.get(queue.pop()['name'], ()):
+                    if child['name'] not in seen:
+                        seen.add(child['name'])
+                        subclasses.append(child)
+                        queue.append(child)
+        return subclasses
+
+    def find_baseclasses(self, subclass: str, recursive: bool = False) -> list[dict]:
+        """Find all direct or recursive base classes of a given class.
+
+        :param subclass: The child class name.
+        :param recursive: If ``True``, find all transitive base classes, not just the direct one.
+        :returns: A list of class dicts that *subclass* descends from — just its direct
+            parent, or the whole ancestor chain nearest-first when *recursive* is ``True``.
+            Empty if *subclass* does not exist, has no ``subClassOf``, or names a parent
+            that does not exist. Each ancestor appears exactly once, and a ``subClassOf``
+            cycle terminates rather than looping forever.
+        """
+        cls = self.find_class(subclass)
+        if cls is None:
+            return []
+
+        parent_name = cls.get('subClassOf')
+        parent_cls = self.find_class(parent_name) if parent_name is not None else None
+        if parent_cls is None:
+            return []
+        if not recursive:
+            return [parent_cls]
+
+        # One O(C) name index then a single iterative walk up the chain, so a deep
+        # subClassOf chain neither recurses nor rescans every class per level.
+        # ``seen`` (seeded with the starting class) also makes a subClassOf cycle
+        # terminate instead of looping forever.
+        by_name = {x['name']: x for x in self._schema["classes"]}
+        baseclasses = [parent_cls]
+        seen = {subclass, parent_cls['name']}
+        current = parent_cls
+        while (next_name := current.get('subClassOf')) is not None and next_name not in seen:
+            current = by_name.get(next_name)
+            if current is None:
+                break
+            seen.add(next_name)
+            baseclasses.append(current)
+        return baseclasses
 
     def _children_index(self) -> dict[str, list[str]]:
         """Build the parent-name -> direct-children-names index in ONE O(C) pass.

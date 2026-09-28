@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from datagraphs.enums import DATATYPE
@@ -496,3 +498,339 @@ class TestSchemaPropertyFunctions:
     def test_should_raise_error_when_deleting_nonexistent_property(self):
         with pytest.raises(PropertyNotFoundError):
             self.schema.delete_property("TestClass", "nonExistentProp")
+
+
+def _hierarchy(*edges: tuple[str, str]) -> DatagraphsSchema:
+    """Build a schema from (child, parent) edges, creating roots as needed."""
+    schema = DatagraphsSchema()
+    for child, parent in edges:
+        if schema.find_class(parent) is None:
+            schema.create_class(parent, "description")
+        schema.create_subclass(child, "description", parent)
+    return schema
+
+
+def _names(classes: list[dict]) -> list[str]:
+    """Class names in returned order — use where order is part of the contract."""
+    return [c["name"] for c in classes]
+
+
+def _nameset(classes: list[dict]) -> set[str]:
+    """Class names as a set — use where order is not part of the contract."""
+    return {c["name"] for c in classes}
+
+
+class TestSchemaFindSubclasses:
+    """``find_subclasses`` over a hierarchy built through the public API.
+
+    Order is not part of the contract, so membership is asserted as a set of names.
+    """
+
+    def test_should_find_only_direct_subclasses_by_default(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"), ("Puppy", "Dog"))
+        assert _nameset(schema.find_subclasses("Animal")) == {"Mammal"}
+
+    def test_should_find_descendants_at_every_depth_when_recursive(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"), ("Puppy", "Dog"))
+        assert _nameset(schema.find_subclasses("Animal", recursive=True)) == {"Mammal", "Dog", "Puppy"}
+
+    def test_should_find_descendants_across_every_branch_when_recursive(self):
+        schema = _hierarchy(
+            ("Mammal", "Animal"), ("Bird", "Animal"),
+            ("Dog", "Mammal"), ("Cat", "Mammal"), ("Robin", "Bird"),
+        )
+        assert _nameset(schema.find_subclasses("Animal", recursive=True)) == {
+            "Mammal", "Bird", "Dog", "Cat", "Robin",
+        }
+
+    def test_should_exclude_classes_outside_the_subtree(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"), ("Saloon", "Vehicle"))
+        found = _nameset(schema.find_subclasses("Animal", recursive=True))
+        assert found == {"Mammal", "Dog"}
+        assert "Vehicle" not in found and "Saloon" not in found
+
+    def test_should_search_from_any_node_not_just_the_root(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"), ("Puppy", "Dog"))
+        assert _nameset(schema.find_subclasses("Mammal", recursive=True)) == {"Dog", "Puppy"}
+
+    def test_should_not_include_the_baseclass_itself(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"))
+        assert "Animal" not in _nameset(schema.find_subclasses("Animal", recursive=True))
+
+    def test_should_return_empty_when_class_is_a_leaf(self):
+        schema = _hierarchy(("Mammal", "Animal"))
+        assert schema.find_subclasses("Mammal") == []
+        assert schema.find_subclasses("Mammal", recursive=True) == []
+
+    def test_should_return_empty_when_class_does_not_exist(self):
+        schema = _hierarchy(("Mammal", "Animal"))
+        assert schema.find_subclasses("Nonexistent") == []
+        assert schema.find_subclasses("Nonexistent", recursive=True) == []
+
+    def test_should_return_empty_for_an_empty_schema(self):
+        assert DatagraphsSchema().find_subclasses("Anything", recursive=True) == []
+
+    def test_should_return_each_descendant_exactly_once(self):
+        schema = _hierarchy(
+            ("Mammal", "Animal"), ("Bird", "Animal"), ("Dog", "Mammal"), ("Robin", "Bird"),
+        )
+        found = [c["name"] for c in schema.find_subclasses("Animal", recursive=True)]
+        assert sorted(found) == sorted(set(found))
+
+    def test_should_return_the_live_class_dicts(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"))
+        found = schema.find_subclasses("Animal", recursive=True)
+        assert all(c is schema.find_class(c["name"]) for c in found)
+
+    def test_recursive_results_should_be_a_superset_of_direct_results(self):
+        schema = _hierarchy(
+            ("Mammal", "Animal"), ("Bird", "Animal"), ("Dog", "Mammal"), ("Puppy", "Dog"),
+        )
+        direct = _nameset(schema.find_subclasses("Animal"))
+        assert direct < _nameset(schema.find_subclasses("Animal", recursive=True))
+
+    def test_should_terminate_on_a_subclassof_cycle(self):
+        schema = _hierarchy(("B", "A"), ("C", "B"))
+        schema.assign_baseclass("A", "C")  # A -> B -> C -> A
+        assert _nameset(schema.find_subclasses("A", recursive=True)) == {"B", "C"}
+
+    def test_should_handle_a_chain_too_deep_to_recurse(self):
+        depth = sys.getrecursionlimit() * 2
+        schema = _hierarchy(*((f"C{i + 1}", f"C{i}") for i in range(depth)))
+        found = schema.find_subclasses("C0", recursive=True)
+        assert len(found) == depth
+        assert _nameset(found) == {f"C{i + 1}" for i in range(depth)}
+
+
+class TestSchemaFindBaseclasses:
+    """``find_baseclasses`` walks up the ``subClassOf`` chain.
+
+    Ancestry is a chain rather than a tree, so nearest-first ordering *is* part of the
+    contract here and is asserted as a list.
+    """
+
+    def test_should_find_only_the_direct_parent_by_default(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"), ("Puppy", "Dog"))
+        assert _names(schema.find_baseclasses("Puppy")) == ["Dog"]
+
+    def test_should_find_the_whole_chain_nearest_first_when_recursive(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"), ("Puppy", "Dog"))
+        assert _names(schema.find_baseclasses("Puppy", recursive=True)) == ["Dog", "Mammal", "Animal"]
+
+    def test_should_exclude_classes_outside_the_ancestry_chain(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Bird", "Animal"), ("Dog", "Mammal"), ("Robin", "Bird"))
+        assert _names(schema.find_baseclasses("Dog", recursive=True)) == ["Mammal", "Animal"]
+
+    def test_should_return_empty_for_a_root_class(self):
+        schema = _hierarchy(("Mammal", "Animal"))
+        assert schema.find_baseclasses("Animal") == []
+        assert schema.find_baseclasses("Animal", recursive=True) == []
+
+    def test_should_return_empty_when_class_does_not_exist(self):
+        schema = _hierarchy(("Mammal", "Animal"))
+        assert schema.find_baseclasses("Nonexistent") == []
+        assert schema.find_baseclasses("Nonexistent", recursive=True) == []
+
+    def test_should_return_empty_for_an_empty_schema(self):
+        assert DatagraphsSchema().find_baseclasses("Anything", recursive=True) == []
+
+    def test_should_return_empty_when_the_parent_reference_is_dangling(self):
+        schema = _hierarchy(("Mammal", "Animal"))
+        schema.assign_baseclass("Mammal", "Ghost")
+        assert schema.find_baseclasses("Mammal") == []
+        assert schema.find_baseclasses("Mammal", recursive=True) == []
+
+    def test_should_stop_at_the_last_resolvable_ancestor(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"))
+        schema.assign_baseclass("Animal", "Ghost")
+        assert _names(schema.find_baseclasses("Dog", recursive=True)) == ["Mammal", "Animal"]
+
+    def test_should_return_each_ancestor_exactly_once(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"), ("Puppy", "Dog"))
+        found = _names(schema.find_baseclasses("Puppy", recursive=True))
+        assert sorted(found) == sorted(set(found))
+
+    def test_should_return_the_live_class_dicts(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"))
+        found = schema.find_baseclasses("Dog", recursive=True)
+        assert all(c is schema.find_class(c["name"]) for c in found)
+
+    def test_recursive_results_should_be_a_superset_of_direct_results(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"), ("Puppy", "Dog"))
+        assert _nameset(schema.find_baseclasses("Puppy")) < _nameset(schema.find_baseclasses("Puppy", recursive=True))
+
+    def test_should_terminate_on_a_subclassof_cycle(self):
+        schema = _hierarchy(("B", "A"), ("C", "B"))
+        schema.assign_baseclass("A", "C")  # A -> B -> C -> A
+        assert _names(schema.find_baseclasses("C", recursive=True)) == ["B", "A"]
+
+    def test_should_handle_a_chain_too_deep_to_recurse(self):
+        depth = sys.getrecursionlimit() * 2
+        schema = _hierarchy(*((f"C{i + 1}", f"C{i}") for i in range(depth)))
+        found = _names(schema.find_baseclasses(f"C{depth}", recursive=True))
+        assert found == [f"C{i}" for i in range(depth - 1, -1, -1)]
+
+    def test_should_agree_with_find_subclasses_on_the_same_hierarchy(self):
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"), ("Puppy", "Dog"))
+        descendants = schema.find_subclasses("Animal", recursive=True)
+        assert len(descendants) == 3  # guards the loop below against passing vacuously
+        for descendant in descendants:
+            assert "Animal" in _nameset(schema.find_baseclasses(descendant["name"], recursive=True))
+
+
+class TestInverseOfRangeCovariance:
+    """An inverse property may point back at the class itself or any class it descends from.
+
+    A property whose range is a base class already accepts instances of every subclass, so
+    an inverse naming an ancestor does point back. The reverse does not hold: a range that
+    is a *descendant* is not satisfied by every instance of the class, and stays invalid.
+    """
+
+    def _schema(self, backref_range: str) -> DatagraphsSchema:
+        """Animal <- Mammal <- Dog, plus Target.backref with the given range."""
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"))
+        schema.create_class("Unrelated", "description")
+        schema.create_class("Target", "description")
+        schema.create_property("Target", "backref", backref_range)
+        return schema
+
+    @staticmethod
+    def _inverse_of(schema: DatagraphsSchema, class_name: str, prop_name: str) -> str | None:
+        prop = schema.find_property(schema.find_class(class_name)["properties"], prop_name)
+        return prop.get("inverseOf")
+
+    def test_should_accept_a_range_naming_the_class_itself(self):
+        schema = self._schema("Dog")
+        schema.create_property("Dog", "rel", "Target", inverse_of="backref")
+        assert self._inverse_of(schema, "Dog", "rel") == "backref"
+
+    def test_should_accept_a_range_naming_the_direct_parent(self):
+        schema = self._schema("Mammal")
+        schema.create_property("Dog", "rel", "Target", inverse_of="backref")
+        assert self._inverse_of(schema, "Dog", "rel") == "backref"
+
+    def test_should_accept_a_range_naming_an_indirect_ancestor(self):
+        schema = self._schema("Animal")
+        schema.create_property("Dog", "rel", "Target", inverse_of="backref")
+        assert self._inverse_of(schema, "Dog", "rel") == "backref"
+
+    def test_should_reject_a_range_naming_an_unrelated_class(self):
+        schema = self._schema("Unrelated")
+        with pytest.raises(InvalidInversePropertyError):
+            schema.create_property("Dog", "rel", "Target", inverse_of="backref")
+
+    def test_should_reject_a_range_naming_a_descendant(self):
+        schema = self._schema("Dog")
+        with pytest.raises(InvalidInversePropertyError):
+            schema.create_property("Animal", "rel", "Target", inverse_of="backref")
+
+    def test_should_reject_a_range_naming_a_sibling_branch(self):
+        schema = self._schema("Mammal")
+        schema.create_subclass("Bird", "description", "Animal")
+        with pytest.raises(InvalidInversePropertyError):
+            schema.create_property("Bird", "rel", "Target", inverse_of="backref")
+
+    def test_should_not_record_the_inverse_when_the_range_is_rejected(self):
+        schema = self._schema("Unrelated")
+        with pytest.raises(InvalidInversePropertyError):
+            schema.create_property("Dog", "rel", "Target", inverse_of="backref")
+        assert schema.find_property(schema.find_class("Dog")["properties"], "rel") is None
+
+    def test_should_still_reject_an_inverse_naming_a_missing_property(self):
+        schema = self._schema("Animal")
+        with pytest.raises(InvalidInversePropertyError):
+            schema.create_property("Dog", "rel", "Target", inverse_of="nonexistent")
+
+    def test_should_still_reject_an_inverse_on_a_datatype_property(self):
+        schema = self._schema("Animal")
+        schema.create_property("Target", "plain", DATATYPE.TEXT)
+        with pytest.raises(InvalidInversePropertyError):
+            schema.create_property("Dog", "rel", "Target", inverse_of="plain")
+
+    def test_should_cascade_an_ancestor_ranged_inverse_to_every_subclass(self):
+        schema = self._schema("Animal")
+        schema.create_property("Animal", "rel", "Target", inverse_of="backref", apply_to_subclasses=True)
+        assert [self._inverse_of(schema, c, "rel") for c in ("Animal", "Mammal", "Dog")] == ["backref"] * 3
+
+    def test_should_accept_an_ancestor_range_through_a_long_chain(self):
+        depth = sys.getrecursionlimit() * 2
+        schema = _hierarchy(*((f"C{i + 1}", f"C{i}") for i in range(depth)))
+        schema.create_class("Target", "description")
+        schema.create_property("Target", "backref", "C0")  # range is the root of the chain
+        schema.create_property(f"C{depth}", "rel", "Target", inverse_of="backref")
+        assert self._inverse_of(schema, f"C{depth}", "rel") == "backref"
+
+
+class TestUpdatePropertyInverseOf:
+    """Adding an inverse to an *existing* property via ``update_property``.
+
+    The datatype is optional on update, so ``inverse_of`` is validated against the
+    property's existing range when the caller does not restate it.
+    """
+
+    def _schema(self, backref_range: str = "Dog") -> DatagraphsSchema:
+        schema = _hierarchy(("Mammal", "Animal"), ("Dog", "Mammal"))
+        schema.create_class("Unrelated", "description")
+        schema.create_class("Target", "description")
+        schema.create_property("Target", "backref", backref_range)
+        return schema
+
+    @staticmethod
+    def _inverse_of(schema: DatagraphsSchema, class_name: str, prop_name: str) -> str | None:
+        prop = schema.find_property(schema.find_class(class_name)["properties"], prop_name)
+        return prop.get("inverseOf")
+
+    def test_should_add_an_inverse_without_restating_the_datatype(self):
+        schema = self._schema()
+        schema.create_property("Dog", "rel", "Target")
+        schema.update_property("Dog", "rel", inverse_of="backref")
+        assert self._inverse_of(schema, "Dog", "rel") == "backref"
+
+    def test_should_keep_the_existing_range_when_the_datatype_is_omitted(self):
+        schema = self._schema()
+        schema.create_property("Dog", "rel", "Target")
+        schema.update_property("Dog", "rel", inverse_of="backref")
+        prop = schema.find_property(schema.find_class("Dog")["properties"], "rel")
+        assert prop["range"] == "Target"
+
+    def test_should_accept_an_ancestor_range_on_update(self):
+        schema = self._schema("Animal")
+        schema.create_property("Dog", "rel", "Target")
+        schema.update_property("Dog", "rel", inverse_of="backref")
+        assert self._inverse_of(schema, "Dog", "rel") == "backref"
+
+    def test_should_still_accept_an_explicitly_restated_datatype(self):
+        schema = self._schema()
+        schema.create_property("Dog", "rel", "Target")
+        schema.update_property("Dog", "rel", datatype="Target", inverse_of="backref")
+        assert self._inverse_of(schema, "Dog", "rel") == "backref"
+
+    def test_should_reject_an_unrelated_range_on_update(self):
+        schema = self._schema("Unrelated")
+        schema.create_property("Dog", "rel", "Target")
+        with pytest.raises(InvalidInversePropertyError, match="does not point back"):
+            schema.update_property("Dog", "rel", inverse_of="backref")
+
+    def test_should_report_a_datatype_property_as_such_not_as_a_missing_class(self):
+        """The old code passed datatype=None straight through, so this raised the
+        misleading 'refers to non-existent class None' instead of naming the real
+        problem: an inverse cannot be set on a datatype property."""
+        schema = self._schema()
+        schema.create_property("Dog", "plain", DATATYPE.TEXT)
+        with pytest.raises(InvalidInversePropertyError, match="concept datatype"):
+            schema.update_property("Dog", "plain", inverse_of="backref")
+
+    def test_should_cascade_an_added_inverse_to_every_subclass(self):
+        schema = self._schema("Animal")
+        schema.create_property("Animal", "rel", "Target", apply_to_subclasses=True)
+        schema.update_property("Animal", "rel", inverse_of="backref", apply_to_subclasses=True)
+        assert [self._inverse_of(schema, c, "rel") for c in ("Animal", "Mammal", "Dog")] == ["backref"] * 3
+
+    def test_should_leave_the_property_untouched_when_the_inverse_is_rejected(self):
+        schema = self._schema("Unrelated")
+        schema.create_property("Dog", "rel", "Target", description="ORIGINAL")
+        with pytest.raises(InvalidInversePropertyError):
+            schema.update_property("Dog", "rel", description="NEW", inverse_of="backref")
+        prop = schema.find_property(schema.find_class("Dog")["properties"], "rel")
+        assert "inverseOf" not in prop
+        assert prop["description"]["@none"] == "ORIGINAL"

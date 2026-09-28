@@ -210,8 +210,12 @@ class Gateway:
                 if len(data) > 0:
                     data = self._map_data_project_urns(data)
                     _logger.info('Writing data for %s...', class_name)
-                    self._client.put(dataset_slug, data)
-                    return {"loaded": len(data), "skipped": 0}
+                    resp = self._client.put(dataset_slug, data)
+                    if resp and 'errors' in resp:
+                        _logger.error('Errors occurred while writing data for %s: %s', class_name, resp['errors'])
+                        return {"loaded": 0, "skipped": len(data)}
+                    else:
+                        return {"loaded": len(data), "skipped": 0}
                 else:
                     _logger.warning('No entities found in file %s...', json_file_path)
                     return {"loaded": 0, "skipped": 1}
