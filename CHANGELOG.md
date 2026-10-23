@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-23
+
 ### Fixed
 - **Silent data loss on load.** `Client.put` stopped at the first batch whose response contained errors, so the rest of the payload was never sent. `Gateway.load_data` ignored what `put` returned and reported every entity as loaded. `put` now attempts every batch and accounts for every entity submitted:
   - A batch the API rejects for its payload (a 4xx response, or a value that cannot be JSON-encoded) is resubmitted one entity at a time, so only the offending entities fail.
