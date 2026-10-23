@@ -3,8 +3,14 @@ import logging
 from typing import ClassVar
 
 import pytest
+import requests
 
-from datagraphs.client import AuthenticationError, DatagraphsError
+from datagraphs.client import (
+    AuthenticationError,
+    DatagraphsError,
+    FailedWrite,
+    HttpStatusError,
+)
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import SCHEMA_APPLY_MODE
@@ -250,13 +256,23 @@ class TestErrorHandling:
         res = self.client.get('Test')
         assert res['errors'] == error_response['errors']
 
-    def test_should_return_errors_for_bad_put_requests(self, mocker):
+    def test_should_report_errors_for_bad_put_requests(self, mocker):
         error_response = { "errors":[
             "Invalid input data"
         ]}
         self.client._http_client.request.return_value = create_response_mock(mocker, 400, data=error_response)
-        res = self.client.put('Test', data={'key': 'value'})
-        assert res['errors'] == error_response['errors']
+        res = self.client.put('Test', data={'id': 'entity-1', 'key': 'value'})
+        assert res.failed == [FailedWrite('entity-1', 400, error_response['errors'])]
+        assert res.loaded == 0
+        assert not res.ok
+
+    def test_should_raise_typed_status_error_for_unexpected_status_codes(self, mocker):
+        response = create_response_mock(mocker, 500, data={'message': 'Something went wrong'}, text='Something went wrong')
+        self.client._http_client.request.return_value = response
+        with pytest.raises(HttpStatusError) as exc_info:
+            self.client.get('Test')
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.errors == ['Something went wrong']
 
     def test_should_return_errors_for_bad_delete_requests(self, mocker):
         error_response = { "errors":[
@@ -422,6 +438,151 @@ class TestDataModification:
         assert kwargs['headers']['x-api-key'] == "test_api_key"
         assert kwargs['headers']['Authorization'] == "Bearer test_token"
 
+# Batched Write Outcome Tests
+class TestBatchedWriteOutcomes:
+    """`put` attempts every batch and accounts for every entity in exactly one outcome.
+
+    Seven entities with a batch size of three are sent as batches [0-2], [3-5] and [6].
+    """
+
+    BATCH_SIZE = 3
+    PAYLOAD_STATUSES = (400, 409, 413, 422)
+    NON_PAYLOAD_STATUSES = (404, 405, 408, 429, 500, 502, 503)
+
+    @pytest.fixture(scope="function", autouse=True)
+    def setup(self, get_client):
+        self.client = get_client('test_client_id', 'test_client_secret', batch_size=self.BATCH_SIZE)
+        self.entities = generate_test_data_list(7)
+
+    def respond(self, mocker, decide):
+        """Serve each PUT with ``decide(batch_ids) -> (status, body)``.
+
+        The batch is first JSON-encoded exactly as ``requests`` would, so encoding
+        failures surface just as they do against the real library.
+        """
+        def side_effect(method, url, **kwargs):
+            requests.Request(method, url, json=kwargs['json']).prepare()
+            status, body = decide([entity.get('id') for entity in kwargs['json']])
+            return create_response_mock(mocker, status, body, reason=f'Status {status}', text=f'status {status} text')
+        self.client._http_client.request.side_effect = side_effect
+
+    def sent_batches(self) -> list[list[str]]:
+        return [[e['id'] for e in c.kwargs['json']] for c in self.client._http_client.request.call_args_list]
+
+    def assert_accounts_for(self, result, loaded: int, failed_ids: list, timed_out_ids: list) -> None:
+        assert result.loaded == loaded
+        assert [f.entity_id for f in result.failed] == failed_ids
+        assert result.timed_out == timed_out_ids
+        assert result.loaded + len(result.failed) + len(result.timed_out) == len(self.entities)
+        assert result.ok == (not failed_ids and not timed_out_ids)
+
+    def test_should_report_success_when_every_batch_is_written(self, mocker):
+        self.respond(mocker, lambda ids: (201, None))
+        result = self.client.put('test-dataset', self.entities)
+        self.assert_accounts_for(result, loaded=7, failed_ids=[], timed_out_ids=[])
+        assert self.sent_batches() == [['entity-0', 'entity-1', 'entity-2'], ['entity-3', 'entity-4', 'entity-5'], ['entity-6']]
+
+    @pytest.mark.parametrize('status', PAYLOAD_STATUSES)
+    def test_should_resubmit_rejected_batch_entity_by_entity_and_still_send_later_batches(self, mocker, status):
+        errors = ['entity-4 has an invalid value']
+        self.respond(mocker, lambda ids: (status, {'errors': errors}) if 'entity-4' in ids else (201, None))
+        result = self.client.put('test-dataset', self.entities)
+        self.assert_accounts_for(result, loaded=6, failed_ids=['entity-4'], timed_out_ids=[])
+        assert result.failed == [FailedWrite('entity-4', status, errors)]
+        batches = self.sent_batches()
+        assert len(batches) == 6
+        for single in (['entity-3'], ['entity-4'], ['entity-5']):
+            assert single in batches
+        assert batches[-1] == ['entity-6']
+
+    @pytest.mark.parametrize('status', NON_PAYLOAD_STATUSES)
+    def test_should_fail_whole_batch_without_resubmitting_when_failure_is_not_about_the_payload(self, mocker, status):
+        self.respond(mocker, lambda ids: (status, {'message': 'not a payload problem'}) if 'entity-4' in ids else (201, None))
+        result = self.client.put('test-dataset', self.entities)
+        self.assert_accounts_for(result, loaded=4, failed_ids=['entity-3', 'entity-4', 'entity-5'], timed_out_ids=[])
+        assert all(f.status_code == status and f.errors == ['not a payload problem'] for f in result.failed)
+        assert len(self.sent_batches()) == 3
+
+    def test_should_report_timed_out_batch_entities_without_resubmitting_them(self, mocker):
+        self.respond(mocker, lambda ids: (504, None) if 'entity-4' in ids else (201, None))
+        result = self.client.put('test-dataset', self.entities)
+        self.assert_accounts_for(result, loaded=4, failed_ids=[], timed_out_ids=['entity-3', 'entity-4', 'entity-5'])
+        assert len(self.sent_batches()) == 3
+
+    def test_should_report_timeout_of_an_individually_resubmitted_entity(self, mocker):
+        def decide(ids):
+            if ids == ['entity-5']:
+                return 504, None
+            return (400, {'errors': ['invalid']}) if 'entity-4' in ids else (201, None)
+        self.respond(mocker, decide)
+        result = self.client.put('test-dataset', self.entities)
+        self.assert_accounts_for(result, loaded=5, failed_ids=['entity-4'], timed_out_ids=['entity-5'])
+
+    def test_should_fail_whole_batch_without_resubmitting_on_connection_error(self, mocker):
+        def side_effect(method, url, **kwargs):
+            if any(e['id'] == 'entity-4' for e in kwargs['json']):
+                raise requests.exceptions.ConnectionError('connection reset')
+            return create_response_mock(mocker, 201)
+        self.client._http_client.request.side_effect = side_effect
+        result = self.client.put('test-dataset', self.entities)
+        self.assert_accounts_for(result, loaded=4, failed_ids=['entity-3', 'entity-4', 'entity-5'], timed_out_ids=[])
+        assert all(f.status_code is None and 'connection reset' in f.errors[0] for f in result.failed)
+        assert len(self.sent_batches()) == 3
+
+    def test_should_report_read_timeout_as_timed_out(self, mocker):
+        def side_effect(method, url, **kwargs):
+            if any(e['id'] == 'entity-4' for e in kwargs['json']):
+                raise requests.exceptions.ReadTimeout('read timed out')
+            return create_response_mock(mocker, 201)
+        self.client._http_client.request.side_effect = side_effect
+        result = self.client.put('test-dataset', self.entities)
+        self.assert_accounts_for(result, loaded=4, failed_ids=[], timed_out_ids=['entity-3', 'entity-4', 'entity-5'])
+
+    @pytest.mark.parametrize('bad_value', [object(), float('nan')], ids=['unserialisable', 'nan'])
+    def test_should_isolate_entity_whose_payload_cannot_be_encoded(self, mocker, bad_value):
+        self.entities[4]['payload'] = bad_value
+        self.respond(mocker, lambda ids: (201, None))
+        result = self.client.put('test-dataset', self.entities)
+        self.assert_accounts_for(result, loaded=6, failed_ids=['entity-4'], timed_out_ids=[])
+        assert result.failed[0].status_code is None
+
+    def test_should_report_rejection_with_empty_body_as_failure(self, mocker):
+        self.respond(mocker, lambda ids: (400, None) if 'entity-4' in ids else (201, None))
+        result = self.client.put('test-dataset', self.entities)
+        self.assert_accounts_for(result, loaded=6, failed_ids=['entity-4'], timed_out_ids=[])
+        assert result.failed == [FailedWrite('entity-4', 400, ['status 400 text'])]
+
+    def test_should_not_resubmit_a_rejected_single_entity(self, mocker):
+        self.respond(mocker, lambda ids: (400, {'errors': ['invalid']}))
+        result = self.client.put('test-dataset', self.entities[0])
+        assert result.failed == [FailedWrite('entity-0', 400, ['invalid'])]
+        assert result.loaded == 0
+        assert self.sent_batches() == [['entity-0']]
+
+    def test_should_report_failed_entities_without_ids(self, mocker):
+        entities = [{'payload': 'a'}, {'payload': 'b'}]
+        self.client._http_client.request.return_value = create_response_mock(mocker, 500, text='boom')
+        result = self.client.put('test-dataset', entities)
+        assert result.failed == [FailedWrite(None, 500, ['boom']), FailedWrite(None, 500, ['boom'])]
+
+    def test_should_send_nothing_for_an_empty_list(self):
+        result = self.client.put('test-dataset', [])
+        assert result.ok
+        assert result.loaded == 0
+        self.client._http_client.request.assert_not_called()
+
+    def test_should_stop_and_raise_when_authentication_fails(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 401)
+        with pytest.raises(AuthenticationError):
+            self.client.put('test-dataset', self.entities)
+        assert all(batch == ['entity-0', 'entity-1', 'entity-2'] for batch in self.sent_batches())
+
+    def test_should_log_a_summary_when_entities_are_not_written(self, mocker, caplog):
+        self.respond(mocker, lambda ids: (504, None) if 'entity-6' in ids else (400, {'errors': ['bad']}) if 'entity-0' in ids else (201, None))
+        with caplog.at_level(logging.ERROR):
+            self.client.put('test-dataset', self.entities)
+        assert 'Loaded 5 of 7 entities into dataset test-dataset: 1 failed, 1 timed out' in caplog.text
+
 class TestSchemaOperations:
 
     SCHEMA_DATA: ClassVar[dict] = {
@@ -540,8 +701,8 @@ class TestSchemaOperations:
         base = "https://api.datagraphs.io/test_project"
         expected_calls = {
             "initial apply reports the blocking dependencies":  ("put",    f"{base}/models/_active", create_response_mock(mocker, 400, self.SCHEMA_VALIDATION_ERROR_RESPONSE)),
-            "clear DirectionForUse entities from the dataset":  ("delete", f"{base}/registered-formulation?filter=DirectionForUse", create_response_mock(mocker, 200, None)),
-            "clear RegisteredFormulation entities from the dataset": ("delete", f"{base}/registered-formulation?filter=RegisteredFormulation", create_response_mock(mocker, 200, None)),
+            "clear DirectionForUse entities from the dataset":  ("delete", f"{base}/registered-formulation?filter=type:DirectionForUse", create_response_mock(mocker, 200, None)),
+            "clear RegisteredFormulation entities from the dataset": ("delete", f"{base}/registered-formulation?filter=type:RegisteredFormulation", create_response_mock(mocker, 200, None)),
             "look up which datasets reference the dropped classes": ("get",  f"{base}/?pageSize=", create_response_mock(mocker, 200, datasets_response)),
             "update the dataset to detach the dropped classes":  ("put",    f"{base}/datasets/registered-formulation", create_response_mock(mocker, 200, None)),
             "re-apply the schema now that dependencies are cleared": ("put", f"{base}/models/_active", create_response_mock(mocker, 200, None)),

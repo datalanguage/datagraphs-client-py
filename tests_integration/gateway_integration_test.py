@@ -83,7 +83,8 @@ class TestGatewayDataOperations:
         cats = get_data('Cat')
         write_json(cats, 'Cat')
         stats = self.gateway.load_data(class_name='Cat', from_dir_path=str(WORKING_DIR))
-        assert stats['loaded'] == len(cats)
+        assert stats.ok
+        assert stats.loaded == len(cats)
 
     def test_should_dump_data_to_file(self) -> None:
         self.client.put('pets', get_data('Dog'))

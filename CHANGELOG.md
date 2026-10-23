@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Silent data loss on load.** `Client.put` stopped at the first batch whose response contained errors, so the rest of the payload was never sent. `Gateway.load_data` ignored what `put` returned and reported every entity as loaded. `put` now attempts every batch and accounts for every entity submitted:
+  - A batch the API rejects for its payload (a 4xx response, or a value that cannot be JSON-encoded) is resubmitted one entity at a time, so only the offending entities fail.
+  - A batch that fails for reasons unrelated to its payload is reported as failed without being resubmitted. These are 5xx responses other than 504, 404, 405, 408, 429 and connection errors.
+  - A batch that times out (504, or a read timeout) is reported as timed out, never as success or failure, because its write may still have completed.
+  - An authentication failure stops the load and raises `AuthenticationError`.
+
+### Changed
+- **Breaking:** `Client.put` now returns a `PutResult`: `loaded` (count), `failed` (a `FailedWrite` with the entity `id`, HTTP status and errors, for each entity not written), `timed_out` (entity ids) and `ok`. Previously it returned `None` or the error body of the first failed batch.
+- **Breaking:** `Gateway.load_data` now returns a `LoadResult` (`loaded`, `skipped`, and per class `failed`, `timed_out` and `class_errors`, plus `ok`) instead of a `{"loaded", "skipped"}` dict. A class whose file cannot be read is now recorded in `class_errors` rather than counted as skipped. `load_data` logs a summary of every entity not written.
+- Non-success API statuses now raise `HttpStatusError`, a `DatagraphsError` subclass carrying `status_code` and `errors`. Existing handling that catches `DatagraphsError` is unaffected.
+
 ## [0.5.9] - 2026-06-18
 
 ### Fixed

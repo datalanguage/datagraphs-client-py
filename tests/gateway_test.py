@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
+from datagraphs.client import AuthenticationError, FailedWrite, PutResult
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import VALIDATION_MODE
@@ -28,6 +29,7 @@ def substance_role_data():
 def mock_client():
     client = MagicMock(spec=DatagraphsClient)
     client.project_name = 'test-project'
+    client.put.side_effect = lambda dataset_slug, data: PutResult(loaded=len(data))
     client.get_datasets.return_value = [
         Dataset(name='Test', project='test-project', classes=['ClassA', 'ClassB'])
     ]
@@ -161,8 +163,8 @@ class TestLoadData:
         assert args[0] == dataset.slug
         loaded_entities = args[1]
         assert len(loaded_entities) == len(substance_role_data)
-        assert result["loaded"] == len(substance_role_data)
-        assert result["skipped"] == 0
+        assert result.loaded == len(substance_role_data)
+        assert result.skipped == 0
 
     def test_should_load_all_classes_from_all_datasets(self, gateway, mock_client, mock_schema, substance_role_data):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['SubstanceRole', 'BufferZoneType'])
@@ -173,7 +175,7 @@ class TestLoadData:
             result = gateway.load_data(from_dir_path=str(DATA_DIR))
         assert mock_client.get_datasets.call_count == 1
         assert mock_client.put.call_count == 2
-        assert result["loaded"] == len(substance_role_data) * 2
+        assert result.loaded == len(substance_role_data) * 2
 
     def test_should_skip_baseclasses_when_loading_all(self, gateway, mock_client, mock_schema, substance_role_data):
         dataset = Dataset(name='Test', project='test', classes=['BaseType', 'SubstanceRole'])
@@ -191,7 +193,7 @@ class TestLoadData:
             result = gateway.load_data(class_name='SubstanceRole', from_dir_path='/nonexistent_path')
         mock_client.put.assert_not_called()
         assert 'No file found' in caplog.text
-        assert result["skipped"] == 1
+        assert result.skipped == 1
 
     def test_should_raise_when_explicit_file_path_not_found(self, gateway, mock_client, caplog):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
@@ -200,7 +202,7 @@ class TestLoadData:
             result = gateway.load_data(class_name='SubstanceRole', file_path='/nonexistent_path')
         mock_client.put.assert_not_called()
         assert 'No file found' in caplog.text
-        assert result["skipped"] == 1
+        assert result.skipped == 1
 
     def test_should_not_attempt_to_write_data_if_file_is_empty_list(self, gateway, mock_client):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
@@ -209,8 +211,8 @@ class TestLoadData:
              patch('builtins.open', mock_open(read_data='[]')):
             result = gateway.load_data(class_name='SubstanceRole', file_path='dummy.json')
         mock_client.put.assert_not_called()
-        assert result["loaded"] == 0
-        assert result["skipped"] == 1
+        assert result.loaded == 0
+        assert result.skipped == 1
 
     def test_should_raise_when_datatype_not_in_any_dataset(self, gateway, mock_client, caplog):
         dataset = Dataset(name='Test', project='test', classes=['TypeA'])
@@ -219,7 +221,7 @@ class TestLoadData:
             result = gateway.load_data(class_name='NonExistentType')
         mock_client.put.assert_not_called()
         assert 'was not found in any dataset' in caplog.text
-        assert result["skipped"] == 1
+        assert result.skipped == 1
         
     def test_should_accept_path_object_for_from_dir_path(self, gateway, mock_client, substance_role_data):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
@@ -234,6 +236,78 @@ class TestLoadData:
         with caplog.at_level(logging.INFO):
             gateway.load_data()
         assert 'baseclass' in caplog.text
+
+class TestLoadDataOutcomes:
+    """`load_data` reports, per class, every entity that was not confirmed as written."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, gateway, mock_client, substance_role_data, tmp_path):
+        self.gateway = gateway
+        self.client = mock_client
+        self.data = substance_role_data
+        self.dir = tmp_path
+        mock_client.get_datasets.return_value = [Dataset(name='Test', project='test-project', classes=['ClassA', 'ClassB', 'ClassC'])]
+        for class_name in ('ClassA', 'ClassB', 'ClassC'):
+            (tmp_path / f'{class_name}.json').write_text(json.dumps(substance_role_data), encoding='utf-8')
+
+    def put_outcomes(self, outcomes: dict) -> None:
+        """Have the client return these `PutResult`s in class load order (keys name the class for readability)."""
+        calls = iter(outcomes.values())
+        self.client.put.side_effect = lambda dataset_slug, data: next(calls)
+
+    def test_should_be_ok_when_every_entity_is_written(self):
+        result = self.gateway.load_data(from_dir_path=self.dir)
+        assert result.ok
+        assert result.loaded == len(self.data) * 3
+        assert (result.failed, result.timed_out, result.class_errors) == ({}, {}, {})
+
+    def test_should_report_failed_and_timed_out_entities_per_class_and_keep_loading(self):
+        failure = FailedWrite('urn:a', 400, ['invalid'])
+        self.put_outcomes({
+            'ClassA': PutResult(loaded=len(self.data) - 1, failed=[failure]),
+            'ClassB': PutResult(loaded=len(self.data) - 2, timed_out=['urn:b1', 'urn:b2']),
+            'ClassC': PutResult(loaded=len(self.data)),
+        })
+        result = self.gateway.load_data(from_dir_path=self.dir)
+        assert not result.ok
+        assert result.loaded == len(self.data) * 3 - 3
+        assert result.failed == {'ClassA': [failure]}
+        assert result.timed_out == {'ClassB': ['urn:b1', 'urn:b2']}
+        assert (result.failed_count, result.timed_out_count) == (1, 2)
+        assert self.client.put.call_count == 3
+
+    def test_should_record_a_class_whose_file_cannot_be_read_and_keep_loading(self):
+        (self.dir / 'ClassB.json').write_text('{not json', encoding='utf-8')
+        result = self.gateway.load_data(from_dir_path=self.dir)
+        assert not result.ok
+        assert list(result.class_errors) == ['ClassB']
+        assert result.loaded == len(self.data) * 2
+        assert result.skipped == 0
+
+    def test_should_treat_a_missing_class_file_as_skipped_not_failed(self):
+        (self.dir / 'ClassB.json').unlink()
+        result = self.gateway.load_data(from_dir_path=self.dir)
+        assert result.ok
+        assert result.skipped == 1
+        assert result.loaded == len(self.data) * 2
+
+    def test_should_stop_and_raise_when_authentication_fails(self):
+        self.client.put.side_effect = AuthenticationError('denied')
+        with pytest.raises(AuthenticationError):
+            self.gateway.load_data(from_dir_path=self.dir)
+        assert self.client.put.call_count == 1
+
+    def test_should_log_the_entities_not_written(self, caplog):
+        self.put_outcomes({
+            'ClassA': PutResult(loaded=0, failed=[FailedWrite('urn:a', 400, ['invalid'])]),
+            'ClassB': PutResult(loaded=0, timed_out=['urn:b']),
+            'ClassC': PutResult(loaded=len(self.data)),
+        })
+        with caplog.at_level(logging.ERROR):
+            self.gateway.load_data(from_dir_path=self.dir)
+        assert 'Data load incomplete' in caplog.text
+        assert "ClassA: 1 failed: ['urn:a']" in caplog.text
+        assert "ClassB: 1 timed out" in caplog.text and "['urn:b']" in caplog.text
 
 class TestClearData:
 

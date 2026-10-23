@@ -4,7 +4,9 @@ import json
 import logging
 import time
 import urllib.parse
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import Enum, auto
 from typing import Any
 
 import requests
@@ -20,6 +22,63 @@ class DatagraphsError(Exception):
 
 class AuthenticationError(DatagraphsError):
     """Raised when authentication or authorisation fails."""
+
+class HttpStatusError(DatagraphsError):
+    """Raised when the API responds with a non-success HTTP status.
+
+    :ivar status_code: The HTTP status code of the response.
+    :ivar errors: The error details reported by the API (or the raw response
+        text when the body carries no structured errors).
+    """
+
+    def __init__(self, status_code: int, errors: list[Any], message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.errors = errors
+
+@dataclass(frozen=True)
+class FailedWrite:
+    """An entity the API did not accept.
+
+    :ivar entity_id: The entity's ``id``, or ``None`` if it has none.
+    :ivar status_code: The HTTP status of the failed request, or ``None`` when
+        no response was received (e.g. a connection error or an unserialisable
+        payload).
+    :ivar errors: The error details for the failure.
+    """
+
+    entity_id: str | None
+    status_code: int | None
+    errors: list[Any]
+
+@dataclass
+class PutResult:
+    """The outcome of `Client.put`, accounting for every entity submitted.
+
+    Each submitted entity is counted in exactly one of ``loaded``, ``failed``
+    or ``timed_out``.
+
+    :ivar loaded: The number of entities the API confirmed as written.
+    :ivar failed: Entities that were not written, with the reason for each.
+    :ivar timed_out: IDs of entities whose request timed out (HTTP 504). The
+        write may or may not have completed server-side: verify with a read,
+        or resubmit them (writes are idempotent upserts).
+    """
+
+    loaded: int = 0
+    failed: list[FailedWrite] = field(default_factory=list)
+    timed_out: list[str | None] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        """True when every submitted entity was confirmed as written."""
+        return not self.failed and not self.timed_out
+
+class _BatchOutcome(Enum):
+    WRITTEN = auto()
+    REJECTED = auto()   # the request payload was refused: worth resubmitting entity by entity
+    FAILED = auto()     # a server or transport failure unrelated to the payload
+    TIMED_OUT = auto()
 
 # Typographic and invisible characters that routinely contaminate credentials
 # and configuration when values are copied from rich-text sources (email, Word,
@@ -78,6 +137,10 @@ class Client:
     _HTTP_FORBIDDEN = 403
     _HTTP_NOT_FOUND = 404
     _HTTP_GATEWAY_TIMEOUT = 504
+    _HTTP_CLIENT_ERRORS = range(400, 500)
+    # 4xx statuses that say nothing about the payload's content, so resubmitting
+    # a rejected batch entity by entity cannot help (and, for 429, would worsen it).
+    _NON_PAYLOAD_CLIENT_ERRORS = frozenset({404, 405, 408, 429})
     _DEFAULT_DATASETS_PAGE_SIZE = 1000
 
     _DATA_EXISTS = "DATA_EXISTS"
@@ -159,45 +222,49 @@ class Client:
                 raise AuthenticationError(f"Failed to obtain auth token: {e}")
         return self._auth_token
 
-    def _request(self, method: HTTP, url: str, _retry_count: int = 0, **kwargs) -> dict[str, Any] | None:
+    def _request(self, method: HTTP, url: str, _retry_count: int = 0, strict: bool = False, **kwargs) -> dict[str, Any] | None:
         """Execute an HTTP request with automatic auth retry.
 
         :param method: The HTTP method to use.
         :param url: The request URL.
         :param _retry_count: Internal retry counter (do not set externally).
+        :param strict: When True, every non-success status raises
+            `HttpStatusError`, rather than a 400 returning its error body and a
+            504 being logged and treated as success.
         :param kwargs: Additional arguments forwarded to the HTTP client.
         :returns: Parsed JSON response for GET requests, or ``None`` for
             mutating requests.
         :raises AuthenticationError: If authentication fails after max retries.
+        :raises HttpStatusError: If the API responds with a failure status.
         :raises DatagraphsError: If the request fails for any other reason.
         """
         try:
             if 'headers' in kwargs and method in [HTTP.PUT, HTTP.POST]:
-                kwargs['headers']['Content-Type'] = 'application/json'            
+                kwargs['headers']['Content-Type'] = 'application/json'
             response = self._http_client.request(str(method), url, **kwargs)
-            if response.status_code in [self._HTTP_OK, self._HTTP_CREATED, self._HTTP_NO_CONTENT, self._HTTP_BAD_REQUEST]:
-                if response.status_code == self._HTTP_BAD_REQUEST:
-                    body = response.json() if response.content else {}
-                    if 'message' in body and 'errors' not in body:
-                        return {'errors': [body['message']]}
-                    else:
-                        return body
-                elif method == HTTP.GET:
-                    return response.json()
-                else:
-                    return {}
-            elif response.status_code == self._HTTP_GATEWAY_TIMEOUT:
-                _logger.warning("%s - %s: continuing processing, but try a smaller batch size...", response.reason, response.text)
-                return {}
-            elif response.status_code in [self._HTTP_UNAUTHORIZED, self._HTTP_FORBIDDEN]:
+            status = response.status_code
+            if status in [self._HTTP_OK, self._HTTP_CREATED, self._HTTP_NO_CONTENT]:
+                return response.json() if method == HTTP.GET else {}
+            elif status in [self._HTTP_UNAUTHORIZED, self._HTTP_FORBIDDEN]:
                 if _retry_count < self._MAX_AUTH_RETRIES:
                     if 'headers' in kwargs and 'Authorization' in kwargs['headers']:
                         kwargs['headers']['Authorization'] = self._get_auth_token(force_refresh=True)
-                    return self._request(method, url, _retry_count=_retry_count + 1, **kwargs)
+                    return self._request(method, url, _retry_count=_retry_count + 1, strict=strict, **kwargs)
                 else:
                     raise AuthenticationError(f'Authentication failed after {self._MAX_AUTH_RETRIES+1} attempts')
+            elif strict:
+                raise HttpStatusError(status, self._extract_errors(response), f"Request failed with status {status}: {response.text}")
+            elif status == self._HTTP_BAD_REQUEST:
+                body = response.json() if response.content else {}
+                if 'message' in body and 'errors' not in body:
+                    return {'errors': [body['message']]}
+                else:
+                    return body
+            elif status == self._HTTP_GATEWAY_TIMEOUT:
+                _logger.warning("%s - %s: continuing processing, but try a smaller batch size...", response.reason, response.text)
+                return {}
             else:
-                raise DatagraphsError(f"Request failed with status {response.status_code}: {response.text}")
+                raise HttpStatusError(status, self._extract_errors(response), f"Request failed with status {status}: {response.text}")
         except UnicodeError as e:
             # Strict in what we send: a value escaped sanitisation and cannot be
             # encoded into the HTTP request (latin-1 header serialisation). Surface
@@ -210,6 +277,20 @@ class Client:
             ) from e
         except requests.exceptions.RequestException as e:
             raise DatagraphsError(f"Request failed: {e}") from e
+
+    @staticmethod
+    def _extract_errors(response: requests.Response) -> list[Any]:
+        """Return the error details from a failure response body, falling back to its text."""
+        try:
+            body = response.json() if response.content else {}
+        except ValueError:
+            body = {}
+        if isinstance(body, dict):
+            if body.get('errors'):
+                return body['errors']
+            if body.get('message'):
+                return [body['message']]
+        return [response.text or response.reason]
 
     def _has_oauth_credentials(self) -> bool:
         return bool(self._client_id and self._client_secret)
@@ -443,34 +524,87 @@ class Client:
         else:
             return []
 
-    def put(self, dataset: str, data: dict[str, Any] | list[dict[str, Any]]) -> int:
+    def put(self, dataset: str, data: dict[str, Any] | list[dict[str, Any]]) -> PutResult:
         """Load entities into a dataset.
 
-        Automatically batches large payloads according to the configured
-        ``batch_size``.
+        Entities are sent in batches of the configured ``batch_size``, and every
+        batch is attempted regardless of the outcome of earlier ones. A batch
+        whose payload is rejected (a 4xx response other than 404, 405, 408 or
+        429, or a value that cannot be JSON-encoded) is resubmitted one entity
+        at a time, so that only the offending entities fail. A batch that fails
+        for reasons unrelated to its payload (those 4xx statuses, a 5xx response
+        or a transport error) is not resubmitted, and all of its entities are
+        reported as failed. A batch that times out (504 or a read timeout) is
+        reported as timed out, since its write may still have completed.
 
         :param dataset: Target dataset slug.
         :param data: A single entity dict or a list of entity dicts.
-        :returns: The number of entities loaded.
+        :returns: The outcome for every submitted entity.
+        :raises AuthenticationError: If authentication fails; no further
+            batches are attempted.
         """
         entities = [data] if isinstance(data, dict) else data
         length = len(entities)
+        url = f'{self._base_url}{dataset}'
+        result = PutResult()
         _logger.info('Loading %d entities into dataset %s in repo: %s', length, dataset, self.project_name)
-        if length > self._batch_size:
-            for i in range(0, length, self._batch_size):
-                batch = entities[i:i + self._batch_size]
-                end = min(i + self._batch_size, length)
-                _logger.info('   Loading batch %d-%d of %d entities into dataset %s in repo: %s', i, end, length, dataset, self.project_name)
-                try:
-                    resp = self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=batch, headers=self._get_headers())
-                    if resp and 'errors' in resp:
-                        return resp
-                except Exception as e:  # noqa: BLE001 - intentional: log the failed batch and continue loading the rest
-                    _logger.error('Error loading batch %d-%d of %d entities into dataset %s: %s', i, end, length, dataset, str(e))
-        else:
-            resp = self._request(HTTP.PUT, f'{self._base_url}{dataset}', json=entities, headers=self._get_headers())
-            if resp and 'errors' in resp:
-                return resp
+        for i in range(0, length, self._batch_size):
+            batch = entities[i:i + self._batch_size]
+            if length > self._batch_size:
+                _logger.info('   Loading batch %d-%d of %d entities into dataset %s in repo: %s', i, i + len(batch), length, dataset, self.project_name)
+            outcome, error = self._put_batch(url, batch)
+            if outcome is _BatchOutcome.REJECTED and len(batch) > 1:
+                _logger.warning('Batch %d-%d of %d entities rejected by dataset %s (%s) - resubmitting entities individually', i, i + len(batch), length, dataset, error)
+                for entity in batch:
+                    self._record_outcome(result, [entity], *self._put_batch(url, [entity]))
+            else:
+                self._record_outcome(result, batch, outcome, error)
+        if not result.ok:
+            _logger.error('Loaded %d of %d entities into dataset %s: %d failed, %d timed out',
+                          result.loaded, length, dataset, len(result.failed), len(result.timed_out))
+        return result
+
+    def _put_batch(self, url: str, batch: list[dict[str, Any]]) -> tuple[_BatchOutcome, Exception | None]:
+        """PUT one batch and classify the outcome, returning it with the error (if any)."""
+        try:
+            self._request(HTTP.PUT, url, strict=True, json=batch, headers=self._get_headers())
+        except AuthenticationError:
+            raise
+        except HttpStatusError as e:
+            if e.status_code == self._HTTP_GATEWAY_TIMEOUT:
+                return _BatchOutcome.TIMED_OUT, e
+            if e.status_code in self._HTTP_CLIENT_ERRORS and e.status_code not in self._NON_PAYLOAD_CLIENT_ERRORS:
+                return _BatchOutcome.REJECTED, e
+            return _BatchOutcome.FAILED, e
+        except DatagraphsError as e:
+            # A read timeout means the request was sent but no response arrived,
+            # so, as with a 504, the write may have completed.
+            if isinstance(e.__cause__, requests.exceptions.ReadTimeout):
+                return _BatchOutcome.TIMED_OUT, e
+            # requests reports an out-of-range float (e.g. NaN) in the payload this way.
+            if isinstance(e.__cause__, requests.exceptions.InvalidJSONError):
+                return _BatchOutcome.REJECTED, e
+            return _BatchOutcome.FAILED, e
+        except TypeError as e:
+            # requests lets a value that is not JSON serialisable escape as a bare TypeError.
+            return _BatchOutcome.REJECTED, e
+        return _BatchOutcome.WRITTEN, None
+
+    @staticmethod
+    def _record_outcome(result: PutResult, batch: list[dict[str, Any]], outcome: _BatchOutcome, error: Exception | None) -> None:
+        """Account for every entity in *batch* in *result* according to *outcome*."""
+        if outcome is _BatchOutcome.WRITTEN:
+            result.loaded += len(batch)
+            return
+        ids = [entity.get('id') if isinstance(entity, dict) else None for entity in batch]
+        if outcome is _BatchOutcome.TIMED_OUT:
+            _logger.warning('Request timed out writing %d entities - the write may still have completed: %s', len(ids), ids)
+            result.timed_out.extend(ids)
+            return
+        status_code = error.status_code if isinstance(error, HttpStatusError) else None
+        errors = error.errors if isinstance(error, HttpStatusError) else [str(error)]
+        _logger.error('Failed to write %d entities %s: %s', len(ids), ids, errors)
+        result.failed.extend(FailedWrite(entity_id, status_code, errors) for entity_id in ids)
 
 
     def delete(self, class_name: str, entity_id: str) -> None:
@@ -691,7 +825,8 @@ class Client:
         :param class_name: The name of the class to clear from the dataset.
         """
         _logger.info('Clearing down data of type %s from dataset: %s', class_name, dataset_slug)
-        url = f'{self._base_url}{dataset_slug}?filter={class_name}'
+        filter = class_name if class_name == self._ALL_TYPES_FILTER else f'type:{class_name}'
+        url = f'{self._base_url}{dataset_slug}?filter={filter}'
         self._request(HTTP.DELETE, url, headers=self._get_headers())
 
     def drop_dataset(self, dataset_slug: str) -> None:

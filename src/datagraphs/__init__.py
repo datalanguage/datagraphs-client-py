@@ -2,9 +2,16 @@
 
 from importlib.metadata import version
 
-from datagraphs.client import AuthenticationError, Client, DatagraphsError
+from datagraphs.client import (
+    AuthenticationError,
+    Client,
+    DatagraphsError,
+    FailedWrite,
+    HttpStatusError,
+    PutResult,
+)
 from datagraphs.dataset import Dataset
-from datagraphs.gateway import Gateway
+from datagraphs.gateway import Gateway, LoadResult
 from datagraphs.schema import Schema
 
 __version__ = version("pydatagraphs")
@@ -15,7 +22,11 @@ __all__ = [
     "Client",
     "DatagraphsError",
     "Dataset",
+    "FailedWrite",
     "Gateway",
+    "HttpStatusError",
+    "LoadResult",
+    "PutResult",
     "Schema",
     "__version__",
 ]

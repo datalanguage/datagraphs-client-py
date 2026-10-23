@@ -68,7 +68,12 @@ gateway = Gateway(client)
 
 # Load / dump data via the Gateway
 gateway.dump_data("./backup")
-gateway.load_data(from_dir_path="./backup")
+result = gateway.load_data(from_dir_path="./backup")
+if not result.ok:
+    # Entities not written, per class: result.failed holds a FailedWrite (id, HTTP
+    # status, errors) for each. result.timed_out holds the ids of writes that hit a
+    # 504 and may still have completed: verify them with a read, or reload them.
+    raise SystemExit(1)
 
 # Load / dump project via the Gateway
 schema_output_path = "./schemas/"

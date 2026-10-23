@@ -3,8 +3,10 @@
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from datagraphs.client import AuthenticationError, FailedWrite, PutResult
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import SCHEMA_APPLY_MODE, VALIDATION_MODE
@@ -12,6 +14,41 @@ from datagraphs.schema import Schema
 from datagraphs.utils import get_project_from_urn, map_project_name
 
 _logger = logging.getLogger(__name__)
+
+@dataclass
+class LoadResult:
+    """The outcome of `Gateway.load_data`.
+
+    :ivar loaded: The number of entities confirmed as written.
+    :ivar skipped: The number of classes not loaded because they had no data
+        file, an empty one, or (for a single requested class) no dataset.
+    :ivar failed: Per class, the entities that were not written and why.
+    :ivar timed_out: Per class, the IDs of entities whose write timed out and
+        may or may not have completed: verify with a read, or reload them.
+    :ivar class_errors: Per class, the error that stopped its file being
+        loaded at all (e.g. invalid JSON or a malformed entity ``id``).
+    """
+
+    loaded: int = 0
+    skipped: int = 0
+    failed: dict[str, list[FailedWrite]] = field(default_factory=dict)
+    timed_out: dict[str, list[str | None]] = field(default_factory=dict)
+    class_errors: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def failed_count(self) -> int:
+        """The total number of entities that were not written."""
+        return sum(len(failures) for failures in self.failed.values())
+
+    @property
+    def timed_out_count(self) -> int:
+        """The total number of entities whose write timed out."""
+        return sum(len(ids) for ids in self.timed_out.values())
+
+    @property
+    def ok(self) -> bool:
+        """True when every entity found was confirmed as written."""
+        return not self.failed and not self.timed_out and not self.class_errors
 
 class Gateway:
     """Higher-level wrapper for deploying projects and bulk import/export of data."""
@@ -139,53 +176,64 @@ class Gateway:
         class_name: str = Schema.ALL_CLASSES,
         from_dir_path: str | Path = "",
         file_path: str | Path = "",
-    ) -> dict:
+    ) -> LoadResult:
         """Load data from JSON files into the DataGraphs project.
 
         Base classes (those with subclasses) are automatically skipped when
-        loading all classes.
+        loading all classes. Check `LoadResult.ok` on the result: a load that
+        returns normally may still have failed or timed-out entities.
 
         :param class_name: The class name to load, or ``Schema.ALL_CLASSES`` to
             load every non-base class found across all datasets.
         :param from_dir_path: Directory containing ``<ClassName>.json`` files.
         :param file_path: Explicit path to a single JSON file (used when loading
             a specific *class_name*).
-        :returns: A dict with ``loaded`` and ``skipped`` counts.
+        :returns: The outcome of the load, per class.
+        :raises AuthenticationError: If authentication fails; no further
+            classes are attempted.
         """
         from_dir_path = Path(from_dir_path) if from_dir_path else Path()
-        stats = {"loaded": 0, "skipped": 0}
+        result = LoadResult()
         datasets = self._client.get_datasets()
         if class_name == Schema.ALL_CLASSES:
             for dataset in datasets:
-                stats = self._load_data_for_dataset(stats, dataset, from_dir_path)
+                self._load_data_for_dataset(result, dataset, from_dir_path)
         else:
             dataset = next((d for d in datasets if class_name in d.classes), None)
             if dataset is not None:
-                stats = self._load_data_for_class(stats, class_name, dataset.slug, from_dir_path, file_path)
+                self._load_data_for_class(result, class_name, dataset.slug, from_dir_path, file_path)
             else:
                 _logger.error('The class %s was not found in any dataset - cannot load data.', class_name)
-                stats["skipped"] += 1
-        return stats
+                result.skipped += 1
+        self._log_load_result(result)
+        return result
 
-    def _load_data_for_dataset(self, stats: dict, dataset: Dataset, from_dir_path: str | Path) -> dict:
+    def _load_data_for_dataset(self, result: LoadResult, dataset: Dataset, from_dir_path: str | Path) -> None:
         """Load data for all non-base classes in a dataset."""
         for dataset_class in dataset.classes:
             if len(self._get_schema().find_subclasses(dataset_class)) == 0:
-                stats = self._load_data_for_class(stats, dataset_class, dataset.slug, from_dir_path)
+                self._load_data_for_class(result, dataset_class, dataset.slug, from_dir_path)
             else:
                 _logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
-        return stats
 
-    def _load_data_for_class(self, stats: dict, class_name: str, dataset_slug: str, from_dir_path: str | Path = "", file_path: str | Path = "") -> dict:
-        """Load data for a specific class from a JSON file."""
+    def _load_data_for_class(self, result: LoadResult, class_name: str, dataset_slug: str, from_dir_path: str | Path = "", file_path: str | Path = "") -> None:
+        """Load data for a specific class from a JSON file, accounting for it in *result*."""
         try:
-            result = self._load_from_file(class_name, dataset_slug, from_dir_path, file_path)
-            stats["loaded"] += result["loaded"]
-            stats["skipped"] += result["skipped"]
-        except Exception as e:  # noqa: BLE001 - intentional: log the failing class, count it skipped, keep loading others
+            put_result = self._load_from_file(class_name, dataset_slug, from_dir_path, file_path)
+        except AuthenticationError:
+            raise
+        except Exception as e:  # noqa: BLE001 - intentional: log the failing class, record the error, keep loading others
             _logger.error('Error loading data for %s: %s', class_name, str(e))
-            stats["skipped"] += 1
-        return stats
+            result.class_errors[class_name] = str(e)
+            return
+        if put_result is None:
+            result.skipped += 1
+            return
+        result.loaded += put_result.loaded
+        if put_result.failed:
+            result.failed[class_name] = put_result.failed
+        if put_result.timed_out:
+            result.timed_out[class_name] = put_result.timed_out
 
     def _load_from_file(
         self,
@@ -193,35 +241,42 @@ class Gateway:
         dataset_slug: str,
         from_dir_path: str | Path = "",
         file_path: str | Path = "",
-    ) -> dict:
+    ) -> PutResult | None:
         """Read a JSON file and PUT its contents into the project.
 
         Returns:
-            A dict with ``loaded`` and ``skipped`` counts.
-
-        Raises:
-            FileNotFoundError: If *file_path* was explicitly provided but does not exist.
+            The outcome of the write, or ``None`` if there was no file or it
+            held no entities.
         """
         json_file_path = Path(from_dir_path).joinpath(f'{class_name}.json') if not file_path else Path(file_path)
-        if json_file_path.is_file():
-            _logger.info('Reading data from %s...', json_file_path)
-            with open(json_file_path, 'r', encoding='utf-8') as dataFile:
-                data = json.load(dataFile)
-                if len(data) > 0:
-                    data = self._map_data_project_urns(data)
-                    _logger.info('Writing data for %s...', class_name)
-                    resp = self._client.put(dataset_slug, data)
-                    if resp and 'errors' in resp:
-                        _logger.error('Errors occurred while writing data for %s: %s', class_name, resp['errors'])
-                        return {"loaded": 0, "skipped": len(data)}
-                    else:
-                        return {"loaded": len(data), "skipped": 0}
-                else:
-                    _logger.warning('No entities found in file %s...', json_file_path)
-                    return {"loaded": 0, "skipped": 1}
-        else:
+        if not json_file_path.is_file():
             _logger.error('No file found at %s...', json_file_path)
-            return {"loaded": 0, "skipped": 1}
+            return None
+        _logger.info('Reading data from %s...', json_file_path)
+        with open(json_file_path, 'r', encoding='utf-8') as dataFile:
+            data = json.load(dataFile)
+        if len(data) == 0:
+            _logger.warning('No entities found in file %s...', json_file_path)
+            return None
+        data = self._map_data_project_urns(data)
+        _logger.info('Writing data for %s...', class_name)
+        return self._client.put(dataset_slug, data)
+
+    @staticmethod
+    def _log_load_result(result: LoadResult) -> None:
+        if result.ok:
+            _logger.info('Loaded %d entities (%d classes skipped)', result.loaded, result.skipped)
+            return
+        _logger.error(
+            'Data load incomplete: %d entities loaded, %d failed, %d timed out, %d classes errored, %d classes skipped',
+            result.loaded, result.failed_count, result.timed_out_count, len(result.class_errors), result.skipped,
+        )
+        for class_name, failures in result.failed.items():
+            _logger.error('   %s: %d failed: %s', class_name, len(failures), [f.entity_id for f in failures])
+        for class_name, ids in result.timed_out.items():
+            _logger.error('   %s: %d timed out (may have been written - verify or reload): %s', class_name, len(ids), ids)
+        for class_name, error in result.class_errors.items():
+            _logger.error('   %s: not loaded: %s', class_name, error)
 
     def _map_data_project_urns(self, data: list[dict]) -> list[dict]:
         """Re-map URN project segments to match the current client project.
