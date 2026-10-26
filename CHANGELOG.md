@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-26
+
 ### Added
 - `utils.rewrite_urns_for_project(obj, project_name)` rewrites the project segment of every valid URN in a nested dict, list or string to `project_name`, whatever the URN's original basepath. Other path segments are kept, so `urn:my-test:path1:id1` becomes `urn:dg-project:path1:id1`. Platform URNs, non-URN strings and dict keys are left unchanged, and the input is not modified.
 - `utils.is_platform_urn(urn)` reports whether a URN is in a DataGraphs platform namespace: `urn:datagraphs:` (datatypes and validation rules) or `urn:models:` (legacy model IDs). The namespace match is case-insensitive.
