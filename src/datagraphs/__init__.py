@@ -9,9 +9,10 @@ from datagraphs.client import (
     FailedWrite,
     HttpStatusError,
     PutResult,
+    TimedOutWrite,
 )
 from datagraphs.dataset import Dataset
-from datagraphs.gateway import Gateway, LoadResult
+from datagraphs.gateway import Gateway, LoadResult, SkippedClass, SkipReason
 from datagraphs.schema import Schema
 
 __version__ = version("pydatagraphs")
@@ -28,5 +29,8 @@ __all__ = [
     "LoadResult",
     "PutResult",
     "Schema",
+    "SkipReason",
+    "SkippedClass",
+    "TimedOutWrite",
     "__version__",
 ]

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `TimedOutWrite` reports an entity whose write timed out, with its `index` and `entity_id`.
+- `SkippedClass` and `SkipReason` report why `Gateway.load_data` skipped a class (`NO_FILE`, `EMPTY_FILE` or `NOT_IN_DATASET`), with the data file path where one was involved.
+- `FailedWrite` and `TimedOutWrite` have a `describe()` method that gives a short log label, e.g. `#17 urn:proj:Agent:a1`, or `#17 (no id)` for an entity without an `id`.
+
+### Changed
+- **Breaking:** Failed and timed-out entities are now reported by position as well as `id`, so entities submitted without an `id` (for DataGraphs to assign one) can be located. `index` is the entity's position in the data passed to `Client.put`, and at the gateway its position in the class's data file. A rejected batch that is resubmitted one entity at a time still reports each entity's original position.
+  - `FailedWrite` gains `index` as its first field: `FailedWrite(index, entity_id, status_code, errors)`.
+  - `PutResult.timed_out` and the per-class lists in `LoadResult.timed_out` now hold `TimedOutWrite` objects instead of ids.
+- **Breaking:** `LoadResult.skipped` is now a mapping from class name to `SkippedClass` instead of a count. Use `len(result.skipped)` for the count.
+- **Breaking:** `LoadResult.class_errors` now holds the exception that stopped each class loading, instead of its message, so callers can tell kinds of error apart (e.g. `json.JSONDecodeError` vs `ValueError`). Use `str(error)` for the message.
+- Documented how to verify a timed-out entity before resubmitting it. An entity with an `id` can be read back, or resubmitted, since a write with an `id` is an idempotent upsert. One without an `id` gets a new `id` on every write, so resubmitting it may create a duplicate: check first by comparing its property values with the persisted entities of its type.
+
 ## [0.8.0] - 2026-10-26
 
 ### Added

@@ -37,9 +37,27 @@ class HttpStatusError(DatagraphsError):
         self.errors = errors
 
 @dataclass(frozen=True)
-class FailedWrite:
+class _SubmittedEntity:
+    """Identifies an entity submitted to `Client.put`.
+
+    :ivar index: The entity's position in the data passed to `Client.put`, so
+        ``data[index]`` is the entity. This works whether or not it has an ``id``.
+    :ivar entity_id: The entity's ``id``, or ``None`` if it has none (DataGraphs
+        assigns one on write).
+    """
+
+    index: int
+    entity_id: str | None
+
+    def describe(self) -> str:
+        """A short label for logs, e.g. ``#17 urn:proj:Agent:a1`` or ``#17 (no id)``."""
+        return f'#{self.index} {self.entity_id}' if self.entity_id is not None else f'#{self.index} (no id)'
+
+@dataclass(frozen=True)
+class FailedWrite(_SubmittedEntity):
     """An entity the API did not accept.
 
+    :ivar index: The entity's position in the data passed to `Client.put`.
     :ivar entity_id: The entity's ``id``, or ``None`` if it has none.
     :ivar status_code: The HTTP status of the failed request, or ``None`` when
         no response was received (e.g. a connection error or an unserialisable
@@ -47,9 +65,16 @@ class FailedWrite:
     :ivar errors: The error details for the failure.
     """
 
-    entity_id: str | None
     status_code: int | None
     errors: list[Any]
+
+@dataclass(frozen=True)
+class TimedOutWrite(_SubmittedEntity):
+    """An entity whose write timed out, and so may or may not have been persisted.
+
+    :ivar index: The entity's position in the data passed to `Client.put`.
+    :ivar entity_id: The entity's ``id``, or ``None`` if it has none.
+    """
 
 @dataclass
 class PutResult:
@@ -60,14 +85,18 @@ class PutResult:
 
     :ivar loaded: The number of entities the API confirmed as written.
     :ivar failed: Entities that were not written, with the reason for each.
-    :ivar timed_out: IDs of entities whose request timed out (HTTP 504). The
-        write may or may not have completed server-side: verify with a read,
-        or resubmit them (writes are idempotent upserts).
+    :ivar timed_out: Entities whose request timed out (HTTP 504 or a read
+        timeout), so whose write may or may not have completed server-side.
+        One with an ``id`` can be verified by reading it back, or resubmitted,
+        since a write with an ``id`` is an idempotent upsert. One without an
+        ``id`` is given a new ``id`` by DataGraphs on every write, so
+        resubmitting it may create a duplicate: verify it first by comparing
+        its property values with the persisted entities of its type.
     """
 
     loaded: int = 0
     failed: list[FailedWrite] = field(default_factory=list)
-    timed_out: list[str | None] = field(default_factory=list)
+    timed_out: list[TimedOutWrite] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -555,10 +584,12 @@ class Client:
             outcome, error = self._put_batch(url, batch)
             if outcome is _BatchOutcome.REJECTED and len(batch) > 1:
                 _logger.warning('Batch %d-%d of %d entities rejected by dataset %s (%s) - resubmitting entities individually', i, i + len(batch), length, dataset, error)
-                for entity in batch:
-                    self._record_outcome(result, [entity], *self._put_batch(url, [entity]))
+                # DataGraphs persists no part of a batch it rejects with a 4xx, so
+                # resubmitting each entity cannot duplicate one, even one without an id.
+                for index, entity in enumerate(batch, start=i):
+                    self._record_outcome(result, [entity], index, *self._put_batch(url, [entity]))
             else:
-                self._record_outcome(result, batch, outcome, error)
+                self._record_outcome(result, batch, i, outcome, error)
         if not result.ok:
             _logger.error('Loaded %d of %d entities into dataset %s: %d failed, %d timed out',
                           result.loaded, length, dataset, len(result.failed), len(result.timed_out))
@@ -591,20 +622,26 @@ class Client:
         return _BatchOutcome.WRITTEN, None
 
     @staticmethod
-    def _record_outcome(result: PutResult, batch: list[dict[str, Any]], outcome: _BatchOutcome, error: Exception | None) -> None:
-        """Account for every entity in *batch* in *result* according to *outcome*."""
+    def _record_outcome(result: PutResult, batch: list[dict[str, Any]], start: int, outcome: _BatchOutcome, error: Exception | None) -> None:
+        """Account for every entity in *batch* in *result* according to *outcome*.
+
+        *start* is the position of the batch's first entity in the data passed to `put`.
+        """
         if outcome is _BatchOutcome.WRITTEN:
             result.loaded += len(batch)
             return
-        ids = [entity.get('id') if isinstance(entity, dict) else None for entity in batch]
+        refs = [(index, entity.get('id') if isinstance(entity, dict) else None) for index, entity in enumerate(batch, start=start)]
         if outcome is _BatchOutcome.TIMED_OUT:
-            _logger.warning('Request timed out writing %d entities - the write may still have completed: %s', len(ids), ids)
-            result.timed_out.extend(ids)
+            timed_out = [TimedOutWrite(index, entity_id) for index, entity_id in refs]
+            _logger.warning('Request timed out writing %d entities - the write may still have completed: %s',
+                            len(timed_out), [t.describe() for t in timed_out])
+            result.timed_out.extend(timed_out)
             return
         status_code = error.status_code if isinstance(error, HttpStatusError) else None
         errors = error.errors if isinstance(error, HttpStatusError) else [str(error)]
-        _logger.error('Failed to write %d entities %s: %s', len(ids), ids, errors)
-        result.failed.extend(FailedWrite(entity_id, status_code, errors) for entity_id in ids)
+        failures = [FailedWrite(index, entity_id, status_code, errors) for index, entity_id in refs]
+        _logger.error('Failed to write %d entities %s: %s', len(failures), [f.describe() for f in failures], errors)
+        result.failed.extend(failures)
 
 
     def delete(self, class_name: str, entity_id: str) -> None:

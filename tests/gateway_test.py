@@ -6,11 +6,12 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
-from datagraphs.client import AuthenticationError, FailedWrite, PutResult
+from datagraphs.client import AuthenticationError, FailedWrite, PutResult, TimedOutWrite
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import VALIDATION_MODE
 from datagraphs.gateway import Gateway as DatagraphsGateway
+from datagraphs.gateway import SkippedClass, SkipReason
 from datagraphs.schema import Schema
 
 DATA_DIR = Path(__file__).parent / 'data'
@@ -164,7 +165,7 @@ class TestLoadData:
         loaded_entities = args[1]
         assert len(loaded_entities) == len(substance_role_data)
         assert result.loaded == len(substance_role_data)
-        assert result.skipped == 0
+        assert result.skipped == {}
 
     def test_should_load_all_classes_from_all_datasets(self, gateway, mock_client, mock_schema, substance_role_data):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['SubstanceRole', 'BufferZoneType'])
@@ -193,7 +194,7 @@ class TestLoadData:
             result = gateway.load_data(class_name='SubstanceRole', from_dir_path='/nonexistent_path')
         mock_client.put.assert_not_called()
         assert 'No file found' in caplog.text
-        assert result.skipped == 1
+        assert result.skipped == {'SubstanceRole': SkippedClass(SkipReason.NO_FILE, Path('/nonexistent_path/SubstanceRole.json'))}
 
     def test_should_raise_when_explicit_file_path_not_found(self, gateway, mock_client, caplog):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
@@ -202,7 +203,7 @@ class TestLoadData:
             result = gateway.load_data(class_name='SubstanceRole', file_path='/nonexistent_path')
         mock_client.put.assert_not_called()
         assert 'No file found' in caplog.text
-        assert result.skipped == 1
+        assert result.skipped == {'SubstanceRole': SkippedClass(SkipReason.NO_FILE, Path('/nonexistent_path'))}
 
     def test_should_not_attempt_to_write_data_if_file_is_empty_list(self, gateway, mock_client):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
@@ -212,7 +213,7 @@ class TestLoadData:
             result = gateway.load_data(class_name='SubstanceRole', file_path='dummy.json')
         mock_client.put.assert_not_called()
         assert result.loaded == 0
-        assert result.skipped == 1
+        assert result.skipped == {'SubstanceRole': SkippedClass(SkipReason.EMPTY_FILE, Path('dummy.json'))}
 
     def test_should_raise_when_datatype_not_in_any_dataset(self, gateway, mock_client, caplog):
         dataset = Dataset(name='Test', project='test', classes=['TypeA'])
@@ -221,7 +222,7 @@ class TestLoadData:
             result = gateway.load_data(class_name='NonExistentType')
         mock_client.put.assert_not_called()
         assert 'was not found in any dataset' in caplog.text
-        assert result.skipped == 1
+        assert result.skipped == {'NonExistentType': SkippedClass(SkipReason.NOT_IN_DATASET)}
         
     def test_should_accept_path_object_for_from_dir_path(self, gateway, mock_client, substance_role_data):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
@@ -262,17 +263,18 @@ class TestLoadDataOutcomes:
         assert (result.failed, result.timed_out, result.class_errors) == ({}, {}, {})
 
     def test_should_report_failed_and_timed_out_entities_per_class_and_keep_loading(self):
-        failure = FailedWrite('urn:a', 400, ['invalid'])
+        failure = FailedWrite(0, 'urn:a', 400, ['invalid'])
+        timeouts = [TimedOutWrite(1, 'urn:b1'), TimedOutWrite(2, None)]
         self.put_outcomes({
             'ClassA': PutResult(loaded=len(self.data) - 1, failed=[failure]),
-            'ClassB': PutResult(loaded=len(self.data) - 2, timed_out=['urn:b1', 'urn:b2']),
+            'ClassB': PutResult(loaded=len(self.data) - 2, timed_out=timeouts),
             'ClassC': PutResult(loaded=len(self.data)),
         })
         result = self.gateway.load_data(from_dir_path=self.dir)
         assert not result.ok
         assert result.loaded == len(self.data) * 3 - 3
         assert result.failed == {'ClassA': [failure]}
-        assert result.timed_out == {'ClassB': ['urn:b1', 'urn:b2']}
+        assert result.timed_out == {'ClassB': timeouts}
         assert (result.failed_count, result.timed_out_count) == (1, 2)
         assert self.client.put.call_count == 3
 
@@ -281,14 +283,15 @@ class TestLoadDataOutcomes:
         result = self.gateway.load_data(from_dir_path=self.dir)
         assert not result.ok
         assert list(result.class_errors) == ['ClassB']
+        assert isinstance(result.class_errors['ClassB'], json.JSONDecodeError)
         assert result.loaded == len(self.data) * 2
-        assert result.skipped == 0
+        assert result.skipped == {}
 
     def test_should_treat_a_missing_class_file_as_skipped_not_failed(self):
         (self.dir / 'ClassB.json').unlink()
         result = self.gateway.load_data(from_dir_path=self.dir)
         assert result.ok
-        assert result.skipped == 1
+        assert result.skipped == {'ClassB': SkippedClass(SkipReason.NO_FILE, self.dir / 'ClassB.json')}
         assert result.loaded == len(self.data) * 2
 
     def test_should_stop_and_raise_when_authentication_fails(self):
@@ -299,15 +302,15 @@ class TestLoadDataOutcomes:
 
     def test_should_log_the_entities_not_written(self, caplog):
         self.put_outcomes({
-            'ClassA': PutResult(loaded=0, failed=[FailedWrite('urn:a', 400, ['invalid'])]),
-            'ClassB': PutResult(loaded=0, timed_out=['urn:b']),
+            'ClassA': PutResult(loaded=0, failed=[FailedWrite(0, 'urn:a', 400, ['invalid']), FailedWrite(3, None, 400, ['invalid'])]),
+            'ClassB': PutResult(loaded=0, timed_out=[TimedOutWrite(5, None)]),
             'ClassC': PutResult(loaded=len(self.data)),
         })
         with caplog.at_level(logging.ERROR):
             self.gateway.load_data(from_dir_path=self.dir)
         assert 'Data load incomplete' in caplog.text
-        assert "ClassA: 1 failed: ['urn:a']" in caplog.text
-        assert "ClassB: 1 timed out" in caplog.text and "['urn:b']" in caplog.text
+        assert "ClassA: 2 failed: ['#0 urn:a', '#3 (no id)']" in caplog.text
+        assert "ClassB: 1 timed out" in caplog.text and "['#5 (no id)']" in caplog.text
 
 class TestClearData:
 
@@ -322,6 +325,41 @@ class TestClearData:
         mock_client.clear_dataset.assert_any_call('test')
         mock_client.clear_dataset.assert_any_call('test2')
 
+
+class TestLoadDataEntityPositions:
+    """Through a real `Client`, failures are reported by position in the class's data file."""
+
+    def test_should_report_failed_entity_without_id_by_its_position_in_the_file(self, tmp_path):
+        client = DatagraphsClient('test-project', 'test-api-key', batch_size=2)
+        client._http_client = MagicMock()
+        def respond(method, url, **kwargs):
+            names = [entity['name'] for entity in kwargs['json']]
+            response = MagicMock(status_code=201, content=b'', text='', reason='Created')
+            if 'bad' in names:
+                body = {'errors': ['bad has an invalid value']}
+                response.status_code, response.content = 400, json.dumps(body).encode()
+                response.json.return_value = body
+            return response
+        client._http_client.request.side_effect = respond
+        client.get_datasets = MagicMock(return_value=[Dataset(name='Test', project='test-project', classes=['ClassA'])])
+        entities = [
+            {'id': 'urn:supplier-a:ClassA:e0', 'name': 'e0'},
+            {'name': 'e1'},
+            {'id': 'urn:supplier-a:ClassA:e2', 'name': 'e2'},
+            {'name': 'bad'},
+            {'name': 'e4'},
+        ]
+        data_file = tmp_path / 'ClassA.json'
+        data_file.write_text(json.dumps(entities), encoding='utf-8')
+
+        result = DatagraphsGateway(client, wait_time_ms=0).load_data(class_name='ClassA', file_path=data_file)
+
+        # Batches of two: 'bad' is second in the second batch, which is rejected and
+        # resubmitted entity by entity; it is reported at its position in the file.
+        assert result.failed == {'ClassA': [FailedWrite(3, None, 400, ['bad has an invalid value'])]}
+        assert json.loads(data_file.read_text(encoding='utf-8'))[result.failed['ClassA'][0].index]['name'] == 'bad'
+        assert result.loaded == 4
+        assert result.timed_out == {}
 
 class TestLoadDataUrnRewriting:
     """Loading rewrites every project URN to the target project, whatever its source basepath.
@@ -437,7 +475,9 @@ class TestLoadDataUrnRewriting:
         ]), encoding='utf-8')
         result = self.gateway.load_data(class_name='ClassA', file_path=self.file)
         assert not result.ok
-        assert 'Expected id property to be string' in result.class_errors['ClassA']
+        error = result.class_errors['ClassA']
+        assert type(error) is ValueError
+        assert 'Expected id property to be string' in str(error)
         self.client.put.assert_not_called()
 
 class TestMapDataProjectUrns:
