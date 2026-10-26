@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-26
+
 ### Added
 - `TimedOutWrite` reports an entity whose write timed out, with its `index` and `entity_id`.
 - `SkippedClass` and `SkipReason` report why `Gateway.load_data` skipped a class (`NO_FILE`, `EMPTY_FILE` or `NOT_IN_DATASET`), with the data file path where one was involved.
