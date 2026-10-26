@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `utils.rewrite_urns_for_project(obj, project_name)` rewrites the project segment of every valid URN in a nested dict, list or string to `project_name`, whatever the URN's original basepath. Other path segments are kept, so `urn:my-test:path1:id1` becomes `urn:dg-project:path1:id1`. Platform URNs, non-URN strings and dict keys are left unchanged, and the input is not modified.
+- `utils.is_platform_urn(urn)` reports whether a URN is in a DataGraphs platform namespace: `urn:datagraphs:` (datatypes and validation rules) or `urn:models:` (legacy model IDs). The namespace match is case-insensitive.
+
+### Changed
+- **Breaking:** `Gateway.load_data` now rewrites every non-platform URN in the loaded data to the target project, so data that mixes URN basepaths (e.g. from an external supplier) is fully remapped. Previously only URNs sharing the project of each entity's own `id` were rewritten, and an entity without an `id` was not remapped at all. Entities without an `id` are still loaded without one, so that DataGraphs assigns it.
+- **Breaking:** Removed `Gateway.UNKNOWN_PROJECT_NAME`, which is no longer used.
+
 ## [0.7.0] - 2026-10-23
 
 ### Fixed

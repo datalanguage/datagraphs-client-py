@@ -323,6 +323,123 @@ class TestClearData:
         mock_client.clear_dataset.assert_any_call('test2')
 
 
+class TestLoadDataUrnRewriting:
+    """Loading rewrites every project URN to the target project, whatever its source basepath.
+
+    The target project is ``test-project`` (from the ``mock_client`` fixture).
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup(self, gateway, mock_client, tmp_path):
+        self.gateway = gateway
+        self.client = mock_client
+        self.file = tmp_path / 'ClassA.json'
+
+    def load(self, entities: list[dict]) -> list[dict]:
+        """Load *entities* from a file and return what was sent to the API (the result is kept in ``self.result``)."""
+        self.file.write_text(json.dumps(entities), encoding='utf-8')
+        self.result = result = self.gateway.load_data(class_name='ClassA', file_path=self.file)
+        assert result.ok
+        self.client.put.assert_called_once()
+        return self.client.put.call_args.args[1]
+
+    def test_should_rewrite_links_to_entities_with_different_basepaths(self):
+        entity = {
+            'id': 'urn:supplier-a:Product:p1',
+            'type': 'Product',
+            'manufacturer': 'urn:supplier-b:Agent:a1',
+            'formulation': {'id': 'urn:supplier-c:registry:eu:Formulation:f1', 'type': 'Formulation'},
+            'components': [
+                'urn:supplier-a:Substance:s1',
+                {'id': 'urn:supplier-d:Substance:s2', 'role': 'urn:supplier-b:SubstanceRole:r1'},
+                'urn:test-project:Substance:s3',
+            ],
+        }
+        sent = self.load([entity])
+        assert sent == [{
+            'id': 'urn:test-project:Product:p1',
+            'type': 'Product',
+            'manufacturer': 'urn:test-project:Agent:a1',
+            'formulation': {'id': 'urn:test-project:registry:eu:Formulation:f1', 'type': 'Formulation'},
+            'components': [
+                'urn:test-project:Substance:s1',
+                {'id': 'urn:test-project:Substance:s2', 'role': 'urn:test-project:SubstanceRole:r1'},
+                'urn:test-project:Substance:s3',
+            ],
+        }]
+
+    def test_should_leave_platform_urns_and_non_urn_values_unchanged_alongside_rewritten_links(self):
+        entity = {
+            'id': 'urn:supplier-a:Product:p1',
+            'manufacturer': 'urn:supplier-b:Agent:a1',
+            'datatype': 'urn:datagraphs:datatypes:text',
+            'model': 'urn:models:0f8fad5bd9cb469fa165',
+            'label': {'en': 'Refers to urn:supplier-a:Product:p1', '@none': 'Product one'},
+            'homepage': 'https://supplier-a.example/urn:supplier-a:Product:p1',
+            'notes': ['plain text', ''],
+            'count': 3,
+            'active': True,
+            'withdrawn': None,
+        }
+        sent = self.load([entity])
+        assert sent == [{
+            **entity,
+            'id': 'urn:test-project:Product:p1',
+            'manufacturer': 'urn:test-project:Agent:a1',
+        }]
+
+    def test_should_rewrite_each_entity_from_its_own_basepath(self):
+        entities = [
+            {'id': 'urn:supplier-a:Agent:a1', 'parent': 'urn:supplier-c:Agent:a9'},
+            {'id': 'urn:supplier-b:Agent:a2', 'parent': 'urn:supplier-a:Agent:a1'},
+            {'id': 'urn:test-project:Agent:a3', 'parent': 'urn:supplier-b:Agent:a2'},
+        ]
+        sent = self.load(entities)
+        assert sent == [
+            {'id': 'urn:test-project:Agent:a1', 'parent': 'urn:test-project:Agent:a9'},
+            {'id': 'urn:test-project:Agent:a2', 'parent': 'urn:test-project:Agent:a1'},
+            {'id': 'urn:test-project:Agent:a3', 'parent': 'urn:test-project:Agent:a2'},
+        ]
+
+    def test_should_load_root_entity_without_id_and_rewrite_its_links(self):
+        # With no id, DataGraphs assigns one on load: the gateway must not invent one.
+        entities = [
+            {
+                'type': 'Product',
+                'manufacturer': 'urn:supplier-b:Agent:a1',
+                'components': [
+                    'urn:supplier-a:Substance:s1',
+                    {'type': 'Ingredient', 'substance': 'urn:supplier-c:Substance:s2'},
+                ],
+                'datatype': 'urn:datagraphs:datatypes:text',
+            },
+            {'id': 'urn:supplier-a:Agent:a2', 'parent': 'urn:supplier-b:Agent:a1'},
+        ]
+        sent = self.load(entities)
+        assert sent == [
+            {
+                'type': 'Product',
+                'manufacturer': 'urn:test-project:Agent:a1',
+                'components': [
+                    'urn:test-project:Substance:s1',
+                    {'type': 'Ingredient', 'substance': 'urn:test-project:Substance:s2'},
+                ],
+                'datatype': 'urn:datagraphs:datatypes:text',
+            },
+            {'id': 'urn:test-project:Agent:a2', 'parent': 'urn:test-project:Agent:a1'},
+        ]
+        assert self.result.loaded == 2
+
+    def test_should_reject_a_file_containing_an_entity_with_a_non_string_id(self):
+        self.file.write_text(json.dumps([
+            {'id': 'urn:supplier-a:Agent:a1'},
+            {'id': 12345, 'parent': 'urn:supplier-a:Agent:a1'},
+        ]), encoding='utf-8')
+        result = self.gateway.load_data(class_name='ClassA', file_path=self.file)
+        assert not result.ok
+        assert 'Expected id property to be string' in result.class_errors['ClassA']
+        self.client.put.assert_not_called()
+
 class TestMapDataProjectUrns:
 
     def test_should_not_remap_when_project_matches(self, gateway, mock_client, substance_role_data):

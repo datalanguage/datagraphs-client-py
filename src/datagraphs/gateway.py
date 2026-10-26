@@ -11,7 +11,7 @@ from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import SCHEMA_APPLY_MODE, VALIDATION_MODE
 from datagraphs.schema import Schema
-from datagraphs.utils import get_project_from_urn, map_project_name
+from datagraphs.utils import rewrite_urns_for_project
 
 _logger = logging.getLogger(__name__)
 
@@ -52,8 +52,6 @@ class LoadResult:
 
 class Gateway:
     """Higher-level wrapper for deploying projects and bulk import/export of data."""
-
-    UNKNOWN_PROJECT_NAME = '__unknown__'
 
     def __init__(self, client: DatagraphsClient, wait_time_ms: int = DatagraphsClient.DEFAULT_WAIT_TIME_MS) -> None:
         """Initialise the Gateway.
@@ -288,27 +286,16 @@ class Gateway:
             The list with URNs re-mapped where necessary.
 
         Raises:
-            ValueError: If an entity is missing a valid string ``id``.
+            ValueError: If an entity is not a dict, or has an ``id`` that is not a string.
         """
         entities = []
         for entity in data:
-            if isinstance(entity, dict):
-                source_project_name = self._get_project_name_from_entity(entity)
-                if source_project_name != self._client.project_name:
-                    entity = map_project_name(entity, from_urn=f'urn:{source_project_name}:', to_urn=f'urn:{self._client.project_name}:')
-                entities.append(entity)
-            else:
+            if not isinstance(entity, dict):
                 raise ValueError(f'Invalid format - could not read data: {entity!s}')  # noqa: TRY004 - ValueError kept for consistency with the sibling raise below and the documented contract
+            if 'id' in entity and not isinstance(entity['id'], str):
+                raise ValueError(f'Expected id property to be string - found type {type(entity["id"])}')
+            entities.append(rewrite_urns_for_project(entity, self._client.project_name))
         return entities
-
-    def _get_project_name_from_entity(self, entity: dict) -> str:
-        project_name = self.UNKNOWN_PROJECT_NAME
-        if 'id' in entity:
-            if isinstance(entity['id'], str):
-                project_name = get_project_from_urn(entity['id'])
-            else:
-                raise ValueError(f'Expected id property to be string - found type {type(entity['id'])}')
-        return project_name
 
     def dump_data(self, to_dir_path: str | Path, class_name: str = Schema.ALL_CLASSES, excluded_class_names: str = "", include_date_fields: bool = False) -> dict:
         """Export entity data from the project to JSON files on disk.

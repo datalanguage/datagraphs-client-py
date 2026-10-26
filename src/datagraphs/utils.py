@@ -22,6 +22,23 @@ def is_valid_urn(urn: str) -> bool:
     """
     return _URN_PATTERN.match(urn) is not None
 
+# URN namespaces owned by the DataGraphs platform rather than by a project:
+# datatypes and validation rules (``urn:datagraphs:``) and legacy model IDs
+# (``urn:models:``).
+_PLATFORM_URN_NAMESPACES = frozenset({'datagraphs', 'models'})
+
+def is_platform_urn(urn: str) -> bool:
+    """Check whether *urn* is in a DataGraphs platform namespace.
+
+    Only the namespace is inspected (case-insensitively, as RFC 2141
+    requires): use `is_valid_urn` to check the URN as a whole.
+
+    :param urn: The string to test.
+    :returns: ``True`` if *urn* starts ``urn:datagraphs:`` or ``urn:models:``.
+    """
+    parts = urn.split(':', 2)
+    return len(parts) == 3 and parts[0].lower() == 'urn' and parts[1].lower() in _PLATFORM_URN_NAMESPACES
+
 def get_type_from_urn(urn: str) -> str:
     """Extract the type segment from a URN.
 
@@ -83,6 +100,28 @@ def map_project_name(
         return [map_project_name(item, from_urn, to_urn) for item in obj]
     elif isinstance(obj, str) and obj.startswith(from_urn):
         return obj.replace(from_urn, to_urn)
+    return obj
+
+def rewrite_urns_for_project(obj: dict | list | str | Any, project_name: str) -> dict | list | str | Any:
+    """Recursively rewrite URNs in *obj* to match the target project.
+
+    Every valid URN string has its project segment (between the first and
+    second colons) replaced with *project_name*, so ``urn:my-test:path1:id1``
+    becomes ``urn:<project_name>:path1:id1``. Platform URNs (see
+    `is_platform_urn`) and non-URN strings are left as-is.
+
+    :param obj: The object to process (dict, list, str, or other).
+    :param project_name: The project name to write into each URN.
+    :returns: A copy of *obj* with URNs rewritten to the target project.
+    """
+    if isinstance(obj, dict):
+        return {key: rewrite_urns_for_project(value, project_name) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [rewrite_urns_for_project(item, project_name) for item in obj]
+    elif isinstance(obj, str) and is_valid_urn(obj) and not is_platform_urn(obj):
+        project_start = obj.index(':') + 1
+        project_end = obj.index(':', project_start)
+        return f'{obj[:project_start]}{project_name}{obj[project_end:]}'
     return obj
 
 
