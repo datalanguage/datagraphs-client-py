@@ -140,8 +140,10 @@ class Gateway:
         :param datasets: The datasets to deploy.
         :param validation_mode: How to handle mismatches between deployment and
             existing datasets. See `VALIDATION_MODE`.
-        :raises ValueError: If duplicate class names are found across datasets.
+        :raises ValueError: If *validation_mode* is not a `VALIDATION_MODE`
+            value, or duplicate class names are found across datasets.
         """
+        validation_mode = VALIDATION_MODE(validation_mode)
         if self._validate_datasets(datasets, self._client.get_datasets(), validation_mode):
             try:
                 self._client.apply_schema(schema, mode=SCHEMA_APPLY_MODE.FORCE)
@@ -247,11 +249,13 @@ class Gateway:
         :param isolation: How to find the rejected entities of a batch the API
             rejects (see `Client.put`).
         :returns: The outcome of the load, per class.
+        :raises ValueError: If *isolation* is not an `ISOLATION_MODE` value.
         :raises AuthenticationError: If authentication fails; no further
             classes are attempted.
         :raises TokenRequestError: If an auth token cannot be obtained; no
             further classes are attempted.
         """
+        isolation = ISOLATION_MODE(isolation)
         from_dir_path = Path(from_dir_path) if from_dir_path else Path()
         result = LoadResult()
         datasets = self._client.get_datasets()

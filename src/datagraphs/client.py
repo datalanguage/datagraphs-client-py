@@ -903,7 +903,9 @@ class Client:
         :raises TokenRequestError: If an auth token cannot be obtained; no
             further batches are attempted. The batch being sent when it was
             raised was not written.
+        :raises ValueError: If *isolation* is not an `ISOLATION_MODE` value.
         """
+        isolation = ISOLATION_MODE(isolation)
         entities = [data] if isinstance(data, dict) else data
         length = len(entities)
         url = f'{self._base_url}{dataset}'
@@ -1049,11 +1051,13 @@ class Client:
             whatever blocks it and then apply it.
         :returns: For ``VALIDATE_ONLY``, the blocking dependencies the API
             reported (empty if none); otherwise ``None``.
+        :raises ValueError: If *mode* is not a `SCHEMA_APPLY_MODE` value.
         :raises DatagraphsError: If the API rejects the schema (and, for
             ``FORCE``, its dependencies cannot be resolved).
         :raises HttpStatusError: If the request fails for any reason other
             than the schema being rejected, e.g. a 504.
         """
+        mode = SCHEMA_APPLY_MODE(mode)
         _logger.info('Applying schema to project: %s', self.project_name)
         url = f'{self._base_url}models/_active'+('?dryRun=true' if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY else '')
         try:

@@ -1928,3 +1928,49 @@ class TestQueryEncoding:
         self.client._http_client.request.return_value = create_response_mock(mocker, 200, search_page([], 0))
         self.client.query(filters='type:Cat,Dog')
         assert '&filter=type:Cat,Dog' in requested_urls(self.client)[0]
+
+# Mode Value Tests
+#
+# A mode may be given as the enum or as its string value, and both must behave
+# identically; anything else is refused before any request is sent.
+class TestModeValues:
+
+    @pytest.fixture(scope="function", autouse=True)
+    def setup(self, get_client):
+        self.client = get_client('test_client_id', 'test_client_secret', batch_size=8)
+
+    def requests_for_put(self, mocker, isolation) -> list[list[str]]:
+        self.client._http_client.request.reset_mock()
+        self.client._http_client.request.side_effect = lambda method, url, **kwargs: create_response_mock(
+            mocker, 400 if any(e['id'] == 'entity-5' for e in kwargs['json']) else 201, {'errors': ['invalid']})
+        self.client.put('ds', generate_test_data_list(8), isolation=isolation)
+        return [[e['id'] for e in c.kwargs['json']] for c in self.client._http_client.request.call_args_list]
+
+    @pytest.mark.parametrize('mode', list(ISOLATION_MODE))
+    def test_should_isolate_the_same_way_given_a_mode_or_its_string_value(self, mocker, mode):
+        assert self.requests_for_put(mocker, mode.value) == self.requests_for_put(mocker, mode)
+
+    def test_should_not_resubmit_given_the_string_none(self, mocker):
+        assert len(self.requests_for_put(mocker, 'none')) == 1
+
+    @pytest.mark.parametrize('isolation', ['nonee', 'NONE', '', None, 3])
+    def test_should_refuse_an_invalid_isolation_mode_before_sending_anything(self, isolation):
+        with pytest.raises(ValueError):
+            self.client.put('ds', generate_test_data_list(8), isolation=isolation)
+        self.client._http_client.request.assert_not_called()
+
+    @pytest.mark.parametrize('mode', list(SCHEMA_APPLY_MODE))
+    def test_should_apply_a_schema_the_same_way_given_a_mode_or_its_string_value(self, mocker, mode):
+        schema = DatagraphsSchema.create_from(TestSchemaOperations.SCHEMA_DATA)
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200)
+        self.client.apply_schema(schema, mode.value)
+        self.client.apply_schema(schema, mode)
+        first, second = requested_urls(self.client)
+        assert first == second
+
+    @pytest.mark.parametrize('mode', ['validate ', 'dry-run', 'VALIDATE', None])
+    def test_should_refuse_an_invalid_schema_mode_rather_than_apply_the_schema(self, mode):
+        with pytest.raises(ValueError):
+            self.client.apply_schema(DatagraphsSchema.create_from(TestSchemaOperations.SCHEMA_DATA), mode)
+        self.client._http_client.request.assert_not_called()
+

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `isolation` given as a string was ignored: `put(..., isolation='none')` bisected instead, because modes were compared by identity with the enum. `Client.put`, `Gateway.load_data`, `Client.apply_schema` and `Gateway.load_project` now accept a mode as the enum or its string value, and treat both the same.
+- An invalid mode was accepted without complaint. For `apply_schema`, a mistyped `mode` (e.g. `'validate '`) applied the schema to the project instead of only validating it. An invalid `isolation`, `mode` or `validation_mode` now raises `ValueError` before any request is sent.
+
 ## [0.11.0] - 2026-10-27
 
 ### Fixed

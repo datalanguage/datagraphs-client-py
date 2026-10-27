@@ -360,6 +360,17 @@ class TestLoadDataOutcomes:
         assert result.skipped == {'ClassB': SkippedClass(SkipReason.NO_FILE, self.dir / 'ClassB.json')}
         assert result.loaded == len(self.data) * 2
 
+    @pytest.mark.parametrize('isolation', ['bisect', 'individual', 'none'])
+    def test_should_accept_an_isolation_mode_as_its_string_value(self, isolation):
+        self.gateway.load_data(from_dir_path=self.dir, isolation=isolation)
+        assert {c.kwargs['isolation'] for c in self.client.put.call_args_list} == {ISOLATION_MODE(isolation)}
+
+    def test_should_refuse_an_invalid_isolation_mode_before_doing_anything(self):
+        with pytest.raises(ValueError):
+            self.gateway.load_data(from_dir_path=self.dir, isolation='bisekt')
+        self.client.get_datasets.assert_not_called()
+        self.client.put.assert_not_called()
+
     @pytest.mark.parametrize('isolation', list(ISOLATION_MODE))
     def test_should_isolate_rejected_entities_as_asked(self, isolation):
         self.gateway.load_data(from_dir_path=self.dir, isolation=isolation)
@@ -630,6 +641,18 @@ class TestLoadProject:
         assert mock_client.tear_down.call_count == 0
         assert mock_client.apply_schema.call_count == 1
         assert mock_client.apply_datasets.call_count == 1
+
+    @pytest.mark.parametrize('mode', ['bypas', 'BYPASS', None])
+    def test_should_refuse_an_invalid_validation_mode_before_doing_anything(self, gateway, mock_client, mock_schema, mode):
+        with pytest.raises(ValueError):
+            gateway.load_project(mock_schema, [Dataset(name='Test', project='test', classes=['ClassC'])], validation_mode=mode)
+        mock_client.get_datasets.assert_not_called()
+        mock_client.apply_schema.assert_not_called()
+
+    def test_should_accept_a_validation_mode_as_its_string_value(self, gateway, mock_client, mock_schema):
+        gateway.load_project(mock_schema, [Dataset(name='Test', project='test', classes=['ClassC'])], validation_mode='bypass')
+        assert mock_client.tear_down.call_count == 0
+        assert mock_client.apply_schema.call_count == 1
 
     def test_should_catch_duplicate_classes_in_datasets(self, gateway, mock_client, mock_schema):
         datasets = [
