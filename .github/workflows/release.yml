@@ -20,16 +20,16 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Set up Python
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --locked --group dev
 
       - name: Run unit tests
         run: uv run pytest tests -v
@@ -47,12 +47,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Set up Python
         run: uv python install 3.12
@@ -73,6 +73,12 @@ jobs:
           sed -i "s/^version = \"${current}\"/version = \"${new}\"/" pyproject.toml
           echo "version=${new}" >> "$GITHUB_OUTPUT"
           echo "Bumped version: ${current} -> ${new}"
+
+      - name: Update lockfile
+        # Record the new version in uv.lock too, so main's lockfile stays in step
+        # with pyproject.toml. The test job's `uv sync --locked` has already shown
+        # the lockfile was current, so only the project's version changes here.
+        run: uv lock
 
       - name: Promote changelog section
         env:
@@ -109,7 +115,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml CHANGELOG.md
+          git add pyproject.toml uv.lock CHANGELOG.md
           git commit -m "release: v${{ steps.version.outputs.version }}"
           git tag "v${{ steps.version.outputs.version }}"
           git push origin main --tags
@@ -118,7 +124,7 @@ jobs:
         run: uv build
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
 
       - name: Prepare release notes
         id: notes
