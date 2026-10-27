@@ -1,5 +1,6 @@
 import pytest
 from datagraphs.client import HttpStatusError
+from datagraphs.enums import ISOLATION_MODE
 from lib import get_client, get_data, get_datasets, get_empty_schema, get_schema
 
 
@@ -185,3 +186,49 @@ class TestDataOperations:
         with pytest.raises(HttpStatusError) as exc_info:
             self.client.query_all(filters='type:Cat', page_size=1_000_000)
         assert exc_info.value.status_code == 400
+
+
+class TestRejectedBatchIsolation:
+
+    @pytest.fixture(scope="function", autouse=True)
+    def setup(self):
+        self.client = get_client('integration-testing', batch_size=16)
+        self.client.tear_down(drop_datasets=False)
+        self.client.apply_schema(get_schema())
+        self.client.apply_datasets(get_datasets())
+
+    def cats(self, invalid: set[int]) -> list[dict]:
+        return [{'id': f'urn:pydg:Cat:iso{i}', 'type': 'Cat', 'name': f'cat{i}', 'naps': 'lots' if i in invalid else i}
+                for i in range(16)]
+
+    @pytest.mark.parametrize('isolation', [ISOLATION_MODE.BISECT, ISOLATION_MODE.INDIVIDUAL])
+    def test_should_write_every_valid_entity_and_report_each_invalid_one(self, isolation) -> None:
+        result = self.client.put('pets', self.cats({3, 11}), isolation=isolation)
+        assert result.loaded == 14
+        assert [f.index for f in result.failed] == [3, 11]
+        for failure in result.failed:
+            assert failure.status_code == 400
+            assert failure.errors == ['Row 1: "naps" must be a number']
+        assert sorted(c['id'] for c in self.client.get(class_name='Cat')) == sorted(
+            f'urn:pydg:Cat:iso{i}' for i in range(16) if i not in {3, 11})
+
+
+class TestQueryEncoding:
+
+    @pytest.fixture(scope="class", autouse=True)
+    def setup(self, request):
+        client = get_client('integration-testing')
+        client.tear_down(drop_datasets=False)
+        client.apply_schema(get_schema())
+        client.apply_datasets(get_datasets())
+        client.put('pets', [
+            {'id': 'urn:pydg:Dog:tj', 'type': 'Dog', 'name': 'Tom', 'nickname': 'Tom & Jerry', 'walks': 1},
+            {'id': 'urn:pydg:Dog:tom', 'type': 'Dog', 'name': 'Tommy', 'nickname': 'Tom', 'walks': 1},
+            {'id': 'urn:pydg:Dog:plus', 'type': 'Dog', 'name': 'Plus', 'nickname': 'C++', 'walks': 1},
+        ])
+        request.cls.client = client
+
+    @pytest.mark.parametrize('nickname', ['Tom & Jerry', 'C++', 'Tom'])
+    def test_should_filter_by_values_holding_url_syntax(self, nickname) -> None:
+        results = self.client.query_all(filters=f'nickname:"{nickname}"')
+        assert [r['nickname'] for r in results] == [nickname]

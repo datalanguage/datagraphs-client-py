@@ -84,6 +84,9 @@ if not dumped.ok:
     # written for a failed class.
     raise SystemExit(1)
 result = gateway.load_data(from_dir_path="./backup")
+# A batch with an invalid entity is rejected whole: the entities in it are then
+# resubmitted in halves to find the rejected ones (isolation=ISOLATION_MODE.BISECT,
+# the default), one at a time (INDIVIDUAL), or not at all (NONE).
 if not result.ok:
     # Entities not written, per class: result.failed holds a FailedWrite (id, HTTP
     # status, errors) for each. result.timed_out holds the ids of writes that hit a

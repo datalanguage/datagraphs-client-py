@@ -16,7 +16,25 @@ def get_gateway(config_key: str) -> DatagraphsGateway:
     gateway = DatagraphsGateway(client)
     return gateway
 
+# DataGraphs is a live service shared by paying customers: the integration
+# tests may only ever touch this project (see CLAUDE.md).
+INTEGRATION_PROJECT = 'pydg'
+
 def get_client(config_key: str, batch_size: int = DatagraphsClient.DEFAULT_BATCH_SIZE) -> DatagraphsClient:
+    """Return a client for the integration test project, refusing any other project.
+
+    Constructing a client sends no request, so the project is checked before
+    anything reaches the API.
+    """
+    client = _create_client(config_key, batch_size)
+    if client.project_name != INTEGRATION_PROJECT:
+        raise RuntimeError(
+            f"Refusing to run against DataGraphs project '{client.project_name}': "
+            f"integration tests may only use the '{INTEGRATION_PROJECT}' project"
+        )
+    return client
+
+def _create_client(config_key: str, batch_size: int) -> DatagraphsClient:
     # Try local config file first (for local development)
     if os.path.exists(config_file_location):
         with open(config_file_location, 'r') as config_file:

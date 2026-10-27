@@ -36,3 +36,21 @@ class SCHEMA_APPLY_MODE(StrEnum):
     VALIDATE_ONLY = 'validate'
     APPLY = 'apply'
     FORCE = 'force'
+
+class ISOLATION_MODE(StrEnum):
+    """How `Client.put` finds the entities the API rejected in a rejected batch.
+
+    DataGraphs rejects a whole batch for any invalid entity, and does not
+    reliably say which, so the rejected entities are found by resubmitting.
+    """
+    BISECT = 'bisect'
+    """Resubmit the batch in halves, splitting each rejected half again until
+    the rejected entities are isolated: about 2·log₂(batch size) requests per
+    rejected entity. When most entities are rejected it switches to
+    resubmitting them one at a time, so a batch never costs more than
+    resubmitting it one entity at a time, plus 2·⌈log₂(batch size)⌉ requests."""
+    INDIVIDUAL = 'individual'
+    """Resubmit each entity of the batch on its own: one request per entity."""
+    NONE = 'none'
+    """Do not resubmit: report every entity of the batch as failed."""
+

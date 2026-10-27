@@ -9,7 +9,7 @@ import pytest
 from datagraphs.client import AuthenticationError, FailedWrite, HttpStatusError, IncompleteReadError, PutResult, TimedOutWrite, TokenRequestError
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
-from datagraphs.enums import VALIDATION_MODE
+from datagraphs.enums import ISOLATION_MODE, VALIDATION_MODE
 from datagraphs.gateway import Gateway as DatagraphsGateway
 from datagraphs.gateway import DumpResult, SkippedClass, SkipReason
 from datagraphs.schema import Schema
@@ -30,7 +30,7 @@ def substance_role_data():
 def mock_client():
     client = MagicMock(spec=DatagraphsClient)
     client.project_name = 'test-project'
-    client.put.side_effect = lambda dataset_slug, data: PutResult(loaded=len(data))
+    client.put.side_effect = lambda dataset_slug, data, **options: PutResult(loaded=len(data))
     client.get_datasets.return_value = [
         Dataset(name='Test', project='test-project', classes=['ClassA', 'ClassB'])
     ]
@@ -320,7 +320,7 @@ class TestLoadDataOutcomes:
     def put_outcomes(self, outcomes: dict) -> None:
         """Have the client return these `PutResult`s in class load order (keys name the class for readability)."""
         calls = iter(outcomes.values())
-        self.client.put.side_effect = lambda dataset_slug, data: next(calls)
+        self.client.put.side_effect = lambda dataset_slug, data, **options: next(calls)
 
     def test_should_be_ok_when_every_entity_is_written(self):
         result = self.gateway.load_data(from_dir_path=self.dir)
@@ -359,6 +359,15 @@ class TestLoadDataOutcomes:
         assert result.ok
         assert result.skipped == {'ClassB': SkippedClass(SkipReason.NO_FILE, self.dir / 'ClassB.json')}
         assert result.loaded == len(self.data) * 2
+
+    @pytest.mark.parametrize('isolation', list(ISOLATION_MODE))
+    def test_should_isolate_rejected_entities_as_asked(self, isolation):
+        self.gateway.load_data(from_dir_path=self.dir, isolation=isolation)
+        assert {c.kwargs['isolation'] for c in self.client.put.call_args_list} == {isolation}
+
+    def test_should_bisect_rejected_batches_by_default(self):
+        self.gateway.load_data(from_dir_path=self.dir)
+        assert {c.kwargs['isolation'] for c in self.client.put.call_args_list} == {ISOLATION_MODE.BISECT}
 
     @pytest.mark.parametrize('error', [
         AuthenticationError('denied'),

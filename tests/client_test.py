@@ -1,5 +1,7 @@
 import json
 import logging
+import math
+import random
 import urllib.parse
 from typing import ClassVar
 
@@ -18,7 +20,7 @@ from datagraphs.client import (
 )
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
-from datagraphs.enums import SCHEMA_APPLY_MODE
+from datagraphs.enums import ISOLATION_MODE, SCHEMA_APPLY_MODE
 from datagraphs.schema import Schema as DatagraphsSchema
 
 TOKEN_TYPE = 'Bearer'
@@ -1680,3 +1682,249 @@ class TestReadIntegrity:
         assert self.client._http_client.request.call_count == 1
         sleep.assert_not_called()
 
+
+# Rejected Batch Isolation Tests
+#
+# The API mock behaves as DataGraphs does: it rejects a whole batch if any
+# entity in it is invalid, writes nothing from a rejected batch, and names only
+# the first invalid row in its error.
+class TestRejectedBatchIsolation:
+
+    BATCH_SIZE = 16
+    ISOLATING_MODES = (ISOLATION_MODE.BISECT, ISOLATION_MODE.INDIVIDUAL)
+
+    @pytest.fixture(scope="function", autouse=True)
+    def setup(self, get_client):
+        self.client = get_client('test_client_id', 'test_client_secret', batch_size=self.BATCH_SIZE)
+        self.written: list[str] = []
+
+    def serve(self, mocker, invalid: set[str], override=None) -> None:
+        """Answer each PUT as DataGraphs would, given the ids of the *invalid* entities.
+
+        *override(ids)* may return a response (or raise) to replace the normal answer.
+        """
+        def side_effect(method, url, **kwargs):
+            ids = [e['id'] for e in kwargs['json']]
+            if override is not None and (response := override(ids)) is not None:
+                return response
+            first_bad = next((row for row, entity_id in enumerate(ids, start=1) if entity_id in invalid), None)
+            if first_bad is not None:
+                return create_response_mock(mocker, 400, {'errors': [f'Row {first_bad}: {ids[first_bad - 1]} is invalid']})
+            self.written.extend(ids)
+            return create_response_mock(mocker, 201)
+        self.client._http_client.request.side_effect = side_effect
+
+    def sent(self) -> list[list[str]]:
+        return [[e['id'] for e in c.kwargs['json']] for c in self.client._http_client.request.call_args_list]
+
+    def assert_isolated(self, result, entities: list[dict], invalid: set[str]) -> None:
+        """Every invalid entity, and only those, is reported as rejected with its own error; every other is written once."""
+        ids = [e['id'] for e in entities]
+        assert [f.index for f in result.failed] == sorted(ids.index(i) for i in invalid)
+        for failure in result.failed:
+            assert failure.entity_id == ids[failure.index]
+            assert failure.status_code == 400
+            assert failure.errors == [f'Row 1: {failure.entity_id} is invalid']
+            assert [failure.entity_id] in self.sent()  # rejected on its own, not by inference
+        assert result.timed_out == []
+        assert result.loaded == len(entities) - len(invalid)
+        assert sorted(self.written) == sorted(set(ids) - invalid)  # each valid entity written exactly once
+
+    INVALID_SETS: ClassVar[dict] = {
+        'first': {0}, 'middle': {7}, 'last': {15}, 'two apart': {3, 12}, 'adjacent run': {4, 5, 6, 7},
+        'every other': set(range(0, 16, 2)), 'all': set(range(16)),
+    }
+
+    @pytest.mark.parametrize('isolation', ISOLATING_MODES)
+    @pytest.mark.parametrize('positions', INVALID_SETS.values(), ids=INVALID_SETS.keys())
+    def test_should_report_exactly_the_invalid_entities_with_their_own_errors(self, mocker, isolation, positions):
+        entities = generate_test_data_list(self.BATCH_SIZE)
+        invalid = {f'entity-{i}' for i in positions}
+        self.serve(mocker, invalid)
+        result = self.client.put('ds', entities, isolation=isolation)
+        self.assert_isolated(result, entities, invalid)
+
+    @pytest.mark.parametrize('seed', range(20))
+    @pytest.mark.parametrize('density', [0.02, 0.1, 0.3, 0.7])
+    def test_should_isolate_correctly_within_the_request_bound_for_any_rejections(self, mocker, get_client, seed, density):
+        size = 64
+        self.client = get_client('test_client_id', 'test_client_secret', batch_size=size)
+        rng = random.Random(seed)
+        entities = generate_test_data_list(size * 3)
+        invalid = {e['id'] for e in entities if rng.random() < density}
+        self.serve(mocker, invalid)
+        result = self.client.put('ds', entities)
+        self.assert_isolated(result, entities, invalid)
+        # Per batch: the batch itself, plus at most one request per entity and the cost of isolating one more.
+        assert len(self.sent()) <= 3 * (1 + size + 2 * math.ceil(math.log2(size)))
+
+    def test_should_isolate_one_rejected_entity_in_about_two_requests_per_halving(self, mocker):
+        self.serve(mocker, {'entity-9'})
+        result = self.client.put('ds', generate_test_data_list(self.BATCH_SIZE))
+        assert len(self.sent()) <= 1 + 2 * math.ceil(math.log2(self.BATCH_SIZE))
+        assert [f.index for f in result.failed] == [9]
+
+    def test_should_bisect_by_default(self, mocker):
+        self.serve(mocker, {'entity-9'})
+        self.client.put('ds', generate_test_data_list(self.BATCH_SIZE))
+        assert len(self.sent()) < 1 + self.BATCH_SIZE
+
+    def test_should_resubmit_each_entity_on_its_own_when_asked(self, mocker):
+        self.serve(mocker, {'entity-9'})
+        self.client.put('ds', generate_test_data_list(self.BATCH_SIZE), isolation=ISOLATION_MODE.INDIVIDUAL)
+        assert self.sent()[1:] == [[f'entity-{i}'] for i in range(self.BATCH_SIZE)]
+
+    def test_should_report_the_whole_batch_as_failed_without_resubmitting_when_asked(self, mocker):
+        self.serve(mocker, {'entity-9'})
+        result = self.client.put('ds', generate_test_data_list(self.BATCH_SIZE), isolation=ISOLATION_MODE.NONE)
+        assert len(self.sent()) == 1
+        assert result.failed == [FailedWrite(i, f'entity-{i}', 400, ['Row 10: entity-9 is invalid']) for i in range(self.BATCH_SIZE)]
+        assert result.loaded == 0
+
+    def test_should_cost_little_more_than_one_at_a_time_when_every_entity_is_rejected(self, mocker):
+        self.serve(mocker, {f'entity-{i}' for i in range(self.BATCH_SIZE)})
+        self.client.put('ds', generate_test_data_list(self.BATCH_SIZE))
+        assert len(self.sent()) <= 1 + self.BATCH_SIZE + 2 * math.ceil(math.log2(self.BATCH_SIZE))
+
+    def test_should_resubmit_one_at_a_time_once_rejections_prove_dense(self, mocker):
+        entities = generate_test_data_list(self.BATCH_SIZE * 3)
+        self.serve(mocker, {e['id'] for e in entities})
+        self.client.put('ds', entities)
+        sent = self.sent()
+        second_batch_start = next(n for n, ids in enumerate(sent) if ids[0] == f'entity-{self.BATCH_SIZE}' and len(ids) == self.BATCH_SIZE)
+        # After the first batch, each all-rejected batch costs exactly one request per entity.
+        assert len(sent) - second_batch_start == 2 * (1 + self.BATCH_SIZE)
+
+    def test_should_keep_bisecting_while_rejections_stay_sparse(self, mocker):
+        entities = generate_test_data_list(self.BATCH_SIZE * 3)
+        self.serve(mocker, {'entity-3', 'entity-20', 'entity-40'})
+        result = self.client.put('ds', entities)
+        assert len(self.sent()) <= 3 * (1 + 2 * math.ceil(math.log2(self.BATCH_SIZE)))
+        assert [f.index for f in result.failed] == [3, 20, 40]
+
+    @pytest.mark.parametrize('timeout', [
+        lambda m: create_response_mock(m, 504, text='timeout'),
+        lambda m: (_ for _ in ()).throw(requests.exceptions.ReadTimeout('read timed out')),
+    ], ids=['504', 'read timeout'])
+    def test_should_report_a_part_that_times_out_as_timed_out_without_splitting_or_retrying_it(self, mocker, timeout):
+        # entity-3 is invalid, so the batch is rejected; the half holding entity-12 then times out.
+        timed_out_part = []
+        def override(ids):
+            if 'entity-12' in ids and len(ids) < self.BATCH_SIZE:
+                timed_out_part.append(ids)
+                return timeout(mocker)
+            return None
+        self.serve(mocker, {'entity-3'}, override)
+        result = self.client.put('ds', generate_test_data_list(self.BATCH_SIZE))
+        assert len(timed_out_part) == 1
+        assert [t.index for t in result.timed_out] == [int(i.split('-')[1]) for i in timed_out_part[0]]
+        assert [f.index for f in result.failed] == [3]
+        assert result.loaded + len(result.failed) + len(result.timed_out) == self.BATCH_SIZE
+
+    def test_should_report_a_part_that_fails_for_another_reason_as_failed_without_splitting_it(self, mocker):
+        failed_part = []
+        def override(ids):
+            if 'entity-12' in ids and len(ids) < self.BATCH_SIZE:
+                failed_part.append(ids)
+                return create_response_mock(mocker, 500, text='boom')
+            return None
+        self.serve(mocker, {'entity-3'}, override)
+        result = self.client.put('ds', generate_test_data_list(self.BATCH_SIZE))
+        assert len(failed_part) == 1
+        server_failures = [f for f in result.failed if f.status_code == 500]
+        assert [f.entity_id for f in server_failures] == failed_part[0]
+        assert all(f.errors == ['boom'] for f in server_failures)
+
+    def test_should_write_every_entity_of_a_batch_rejected_only_for_its_size(self, mocker):
+        self.serve(mocker, set(), lambda ids: create_response_mock(mocker, 413, text='Payload Too Large') if len(ids) > 4 else None)
+        result = self.client.put('ds', generate_test_data_list(self.BATCH_SIZE))
+        assert result.ok
+        assert result.loaded == self.BATCH_SIZE
+        assert sorted(self.written) == sorted(f'entity-{i}' for i in range(self.BATCH_SIZE))
+
+    def test_should_stop_when_authentication_fails_during_isolation(self, mocker):
+        self.serve(mocker, {'entity-3'}, lambda ids: create_response_mock(mocker, 401) if len(ids) < self.BATCH_SIZE else None)
+        with pytest.raises(AuthenticationError):
+            self.client.put('ds', generate_test_data_list(self.BATCH_SIZE * 2))
+        assert all(len(ids) == self.BATCH_SIZE or 'entity-0' in ids for ids in self.sent())
+
+
+
+# Query Encoding Tests
+#
+# Each value must reach the API exactly as given: decoding the query string the
+# way a server does must give back every parameter unchanged, with no value
+# split or merged by an unencoded '&', '=' or '#'.
+AWKWARD_VALUES = {
+    'ampersand': 'nickname:Tom & Jerry',
+    'equals and hash': 'code:a=b#c',
+    'plus and percent': 'range:now+1d %20',
+    'quotes and brackets': 'name:"O\'Brien" AND (type:Cat OR type:Dog)',
+    'slash and question mark': 'path:/a/b?c',
+    'non-ascii': 'name:Müller – 東京',
+    'plain filter': 'type:Cat,Dog',
+}
+
+class TestQueryEncoding:
+
+    @pytest.fixture(scope="function", autouse=True)
+    def setup(self, get_client):
+        self.client = get_client(batch_size=2, max_read_retries=0)
+
+    def sent_params(self, n: int = 0) -> dict[str, list[str]]:
+        query = urllib.parse.urlsplit(requested_urls(self.client)[n]).query
+        return urllib.parse.parse_qs(query, keep_blank_values=True)
+
+    @pytest.mark.parametrize('value', AWKWARD_VALUES.values(), ids=AWKWARD_VALUES.keys())
+    @pytest.mark.parametrize('read', [
+        lambda c, v: c.query(filters=v),
+        lambda c, v: c.query_page(filters=v),
+        lambda c, v: c.query_all(filters=v),
+    ], ids=['query', 'query_page', 'query_all'])
+    def test_should_send_filters_exactly_as_given(self, mocker, read, value):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, search_page([], 0))
+        read(self.client, value)
+        assert self.sent_params()['filter'] == [value]
+
+    @pytest.mark.parametrize('value', AWKWARD_VALUES.values(), ids=AWKWARD_VALUES.keys())
+    def test_should_send_every_query_value_exactly_as_given(self, mocker, value):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, search_page([], 0))
+        self.client.query(q=value, filters=value, facets=value, date_facets=value, fields=value,
+                          embed=value, sort=value, lang=value, next_page_token=value)
+        params = self.sent_params()
+        for name in ('q', 'filter', 'facets', 'dateFacets', 'fields', 'embed', 'sort', 'lang', 'nextPageToken'):
+            assert params[name] == [value], name
+        assert self.client._http_client.request.call_args.kwargs['headers']['Accept-Language'] == value
+
+    def test_should_send_ids_exactly_as_given(self, mocker):
+        ids = 'urn:pydg:Cat:a&b,urn:pydg:Cat:c#d'
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, [])
+        self.client.query(ids=ids)
+        assert self.sent_params()['ids'] == [ids]
+
+    def test_should_keep_filters_on_every_page_exactly_as_given(self, mocker):
+        value = AWKWARD_VALUES['ampersand']
+        self.client._http_client.request.side_effect = paged_responses(mocker, generate_test_data_list(5), 2, tokens=True)
+        self.client.query_all(filters=value)
+        assert [self.sent_params(n)['filter'] for n in range(3)] == [[value]] * 3
+
+    def test_should_send_page_tokens_exactly_as_given(self, mocker):
+        # A base64 token can hold '+', '/' and '=': an unencoded '+' would arrive as a space.
+        token = 'ab+cd/ef=='
+        entities = generate_test_data_list(4)
+        self.client._http_client.request.side_effect = [
+            create_response_mock(mocker, 200, search_page(entities[:2], 4, token)),
+            create_response_mock(mocker, 200, search_page(entities[2:], 4, 'next')),
+        ]
+        assert self.client.get('Test') == entities
+        assert self.sent_params(1)['nextPageToken'] == [token]
+
+    def test_should_send_class_filter_exactly_as_given_when_clearing_a_dataset(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200)
+        self.client.clear_class_from_dataset('ds', 'Odd&Class')
+        assert self.sent_params()['filter'] == ['type:Odd&Class']
+
+    def test_should_keep_filter_syntax_readable(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, search_page([], 0))
+        self.client.query(filters='type:Cat,Dog')
+        assert '&filter=type:Cat,Dog' in requested_urls(self.client)[0]
