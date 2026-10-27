@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum, auto
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 
@@ -19,13 +19,24 @@ from datagraphs.dataset import Dataset
 from datagraphs.enums import HTTP, ISOLATION_MODE, SCHEMA_APPLY_MODE
 from datagraphs.schema import Schema as DatagraphsSchema
 
+if TYPE_CHECKING:
+    from datagraphs.gateway import DumpResult, LoadResult
+
 _logger = logging.getLogger(__name__)
 
 class DatagraphsError(Exception):
     """Base exception for DataGraphs client errors."""
 
 class AuthenticationError(DatagraphsError):
-    """Raised when authentication or authorisation fails."""
+    """Raised when authentication or authorisation fails.
+
+    :ivar result: When this stopped a `Client.put`, `Gateway.load_data` or
+        `Gateway.dump_data` part-way, the outcome of what it did before
+        stopping (a `PutResult`, `LoadResult` or `DumpResult`), accounting for
+        what it did not do; otherwise ``None``.
+    """
+
+    result: 'PutResult | LoadResult | DumpResult | None' = None
 
 class HttpStatusError(DatagraphsError):
     """Raised when the API responds with a non-success HTTP status.
@@ -53,7 +64,13 @@ class TokenRequestError(DatagraphsError):
         response was received (the underlying ``requests`` exception, e.g. a
         ``ReadTimeout``, is then the ``__cause__``).
     :ivar errors: The error details for the failure.
+    :ivar result: When this stopped a `Client.put`, `Gateway.load_data` or
+        `Gateway.dump_data` part-way, the outcome of what it did before
+        stopping (a `PutResult`, `LoadResult` or `DumpResult`), accounting for
+        what it did not do; otherwise ``None``.
     """
+
+    result: 'PutResult | LoadResult | DumpResult | None' = None
 
     def __init__(self, status_code: int | None, errors: list[Any], message: str) -> None:
         super().__init__(message)
@@ -136,12 +153,24 @@ class TimedOutWrite(_SubmittedEntity):
     :ivar entity_id: The entity's ``id``, or ``None`` if it has none.
     """
 
+@dataclass(frozen=True)
+class UnsentWrite(_SubmittedEntity):
+    """An entity `Client.put` did not write because it stopped before doing so.
+
+    The API did not accept it: it was not sent, or was refused for lack of
+    valid authentication. So it can be resubmitted without creating a
+    duplicate, even if it has no ``id``.
+
+    :ivar index: The entity's position in the data passed to `Client.put`.
+    :ivar entity_id: The entity's ``id``, or ``None`` if it has none.
+    """
+
 @dataclass
 class PutResult:
     """The outcome of `Client.put`, accounting for every entity submitted.
 
-    Each submitted entity is counted in exactly one of ``loaded``, ``failed``
-    or ``timed_out``.
+    Each submitted entity is counted in exactly one of ``loaded``, ``failed``,
+    ``timed_out`` or ``unsent``.
 
     :ivar loaded: The number of entities the API confirmed as written.
     :ivar failed: Entities that were not written, with the reason for each.
@@ -152,22 +181,71 @@ class PutResult:
         ``id`` is given a new ``id`` by DataGraphs on every write, so
         resubmitting it may create a duplicate: verify it first by comparing
         its property values with the persisted entities of its type.
+    :ivar unsent: Entities not written because `put` stopped early, on an
+        `AuthenticationError` or `TokenRequestError`. Only a result attached
+        to such an error (as its ``result``) has any.
     """
 
     loaded: int = 0
     failed: list[FailedWrite] = field(default_factory=list)
     timed_out: list[TimedOutWrite] = field(default_factory=list)
+    unsent: list[UnsentWrite] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         """True when every submitted entity was confirmed as written."""
-        return not self.failed and not self.timed_out
+        return not self.failed and not self.timed_out and not self.unsent
 
 class _BatchOutcome(Enum):
     WRITTEN = auto()
     REJECTED = auto()   # the request payload was refused: worth resubmitting entity by entity
     FAILED = auto()     # a server or transport failure unrelated to the payload
     TIMED_OUT = auto()
+
+class _PutLedger:
+    """Accounts for each entity of one `Client.put` in its `PutResult` exactly once.
+
+    It also notes which entities have been accounted for, so that if the put
+    stops part-way the rest can be reported as unsent.
+    """
+
+    def __init__(self, entities: list[dict[str, Any]]) -> None:
+        self.result = PutResult()
+        self._entities = entities
+        self._accounted = bytearray(len(entities))
+
+    def record(self, batch: list[dict[str, Any]], start: int, outcome: '_BatchOutcome', error: Exception | None) -> None:
+        """Account for every entity in *batch* according to *outcome*.
+
+        *start* is the position of the batch's first entity in the data passed to `put`.
+        """
+        self._accounted[start:start + len(batch)] = b'\x01' * len(batch)
+        if outcome is _BatchOutcome.WRITTEN:
+            self.result.loaded += len(batch)
+            return
+        refs = [(index, _entity_id(entity)) for index, entity in enumerate(batch, start=start)]
+        if outcome is _BatchOutcome.TIMED_OUT:
+            timed_out = [TimedOutWrite(index, entity_id) for index, entity_id in refs]
+            _logger.warning('Request timed out writing %d entities - the write may still have completed: %s',
+                            len(timed_out), [t.describe() for t in timed_out])
+            self.result.timed_out.extend(timed_out)
+            return
+        status_code = error.status_code if isinstance(error, HttpStatusError) else None
+        errors = error.errors if isinstance(error, HttpStatusError) else [str(error)]
+        failures = [FailedWrite(index, entity_id, status_code, errors) for index, entity_id in refs]
+        _logger.error('Failed to write %d entities %s: %s', len(failures), [f.describe() for f in failures], errors)
+        self.result.failed.extend(failures)
+
+    def record_rest_unsent(self) -> None:
+        """Report every entity not yet accounted for as unsent."""
+        self.result.unsent.extend(
+            UnsentWrite(index, _entity_id(entity))
+            for index, (entity, accounted) in enumerate(zip(self._entities, self._accounted))
+            if not accounted
+        )
+
+def _entity_id(entity: Any) -> str | None:
+    return entity.get('id') if isinstance(entity, dict) else None
 
 @dataclass
 class _RejectionTally:
@@ -898,18 +976,34 @@ class Client:
             rejected; ``INDIVIDUAL`` resubmits each entity on its own; ``NONE``
             reports the whole batch as failed without resubmitting it.
         :returns: The outcome for every submitted entity.
+        :raises ValueError: If *isolation* is not an `ISOLATION_MODE` value.
         :raises AuthenticationError: If authentication fails; no further
-            batches are attempted.
+            batches are attempted. Its ``result`` accounts for every entity,
+            with those not written in ``unsent``.
         :raises TokenRequestError: If an auth token cannot be obtained; no
-            further batches are attempted. The batch being sent when it was
-            raised was not written.
+            further batches are attempted. Its ``result`` accounts for every
+            entity, with those not written in ``unsent``.
         """
+        isolation = ISOLATION_MODE(isolation)
         entities = [data] if isinstance(data, dict) else data
         length = len(entities)
         url = f'{self._base_url}{dataset}'
-        result = PutResult()
-        tally = _RejectionTally()
+        ledger = _PutLedger(entities)
         _logger.info('Loading %d entities into dataset %s in repo: %s', length, dataset, self.project_name)
+        try:
+            self._put_batches(url, dataset, entities, isolation, ledger)
+        except (AuthenticationError, TokenRequestError) as e:
+            ledger.record_rest_unsent()
+            e.result = ledger.result
+            self._log_put_result(ledger.result, length, dataset)
+            raise
+        self._log_put_result(ledger.result, length, dataset)
+        return ledger.result
+
+    def _put_batches(self, url: str, dataset: str, entities: list[dict[str, Any]], isolation: ISOLATION_MODE, ledger: _PutLedger) -> None:
+        """Send *entities* in batches, accounting for each in *ledger*."""
+        length = len(entities)
+        tally = _RejectionTally()
         for i in range(0, length, self._batch_size):
             batch = entities[i:i + self._batch_size]
             if length > self._batch_size:
@@ -919,15 +1013,17 @@ class Client:
                 budget = _IsolationBudget(limit=len(batch) + self._isolation_slack(isolation, len(batch), tally), unresolved=len(batch))
                 _logger.warning('Batch %d-%d of %d entities rejected by dataset %s (%s) - resubmitting to isolate the rejected entities (at most %d requests)',
                                 i, i + len(batch), length, dataset, error, budget.limit)
-                self._isolate(url, batch, i, result, budget)
+                self._isolate(url, batch, i, ledger, budget)
                 tally.entities += len(batch)
                 tally.rejected += budget.rejected
             else:
-                self._record_outcome(result, batch, i, outcome, error)
+                ledger.record(batch, i, outcome, error)
+
+    @staticmethod
+    def _log_put_result(result: PutResult, length: int, dataset: str) -> None:
         if not result.ok:
-            _logger.error('Loaded %d of %d entities into dataset %s: %d failed, %d timed out',
-                          result.loaded, length, dataset, len(result.failed), len(result.timed_out))
-        return result
+            _logger.error('Loaded %d of %d entities into dataset %s: %d failed, %d timed out, %d not sent',
+                          result.loaded, length, dataset, len(result.failed), len(result.timed_out), len(result.unsent))
 
     def _isolation_slack(self, isolation: ISOLATION_MODE, size: int, tally: _RejectionTally) -> int:
         """The requests beyond one per entity that isolating a rejected batch of *size* may spend.
@@ -957,8 +1053,8 @@ class Client:
         left = rejected - right
         return 2 + Client._bisection_cost(left_size, left) + Client._bisection_cost(size - left_size, right)
 
-    def _isolate(self, url: str, group: list[dict[str, Any]], start: int, result: PutResult, budget: _IsolationBudget) -> None:
-        """Find the rejected entities of a rejected *group*, accounting for every entity in *result*.
+    def _isolate(self, url: str, group: list[dict[str, Any]], start: int, ledger: _PutLedger, budget: _IsolationBudget) -> None:
+        """Find the rejected entities of a rejected *group*, accounting for every entity in *ledger*.
 
         The group is split in halves while *budget* allows, and otherwise
         resubmitted one entity at a time. *start* is the position of its first
@@ -978,10 +1074,10 @@ class Client:
             else:
                 if outcome is _BatchOutcome.REJECTED:
                     budget.rejected += 1
-                self._record_outcome(result, part, offset, outcome, error)
+                ledger.record(part, offset, outcome, error)
             offset += len(part)
         for part, part_start in rejected:
-            self._isolate(url, part, part_start, result, budget)
+            self._isolate(url, part, part_start, ledger, budget)
 
     def _put_batch(self, url: str, batch: list[dict[str, Any]]) -> tuple[_BatchOutcome, Exception | None]:
         """PUT one batch and classify the outcome, returning it with the error (if any)."""
@@ -1007,29 +1103,6 @@ class Client:
             return _BatchOutcome.REJECTED, e
         return _BatchOutcome.WRITTEN, None
 
-    @staticmethod
-    def _record_outcome(result: PutResult, batch: list[dict[str, Any]], start: int, outcome: _BatchOutcome, error: Exception | None) -> None:
-        """Account for every entity in *batch* in *result* according to *outcome*.
-
-        *start* is the position of the batch's first entity in the data passed to `put`.
-        """
-        if outcome is _BatchOutcome.WRITTEN:
-            result.loaded += len(batch)
-            return
-        refs = [(index, entity.get('id') if isinstance(entity, dict) else None) for index, entity in enumerate(batch, start=start)]
-        if outcome is _BatchOutcome.TIMED_OUT:
-            timed_out = [TimedOutWrite(index, entity_id) for index, entity_id in refs]
-            _logger.warning('Request timed out writing %d entities - the write may still have completed: %s',
-                            len(timed_out), [t.describe() for t in timed_out])
-            result.timed_out.extend(timed_out)
-            return
-        status_code = error.status_code if isinstance(error, HttpStatusError) else None
-        errors = error.errors if isinstance(error, HttpStatusError) else [str(error)]
-        failures = [FailedWrite(index, entity_id, status_code, errors) for index, entity_id in refs]
-        _logger.error('Failed to write %d entities %s: %s', len(failures), [f.describe() for f in failures], errors)
-        result.failed.extend(failures)
-
-
     def delete(self, class_name: str, entity_id: str) -> None:
         """Delete a single entity by class and ID.
 
@@ -1049,11 +1122,13 @@ class Client:
             whatever blocks it and then apply it.
         :returns: For ``VALIDATE_ONLY``, the blocking dependencies the API
             reported (empty if none); otherwise ``None``.
+        :raises ValueError: If *mode* is not a `SCHEMA_APPLY_MODE` value.
         :raises DatagraphsError: If the API rejects the schema (and, for
             ``FORCE``, its dependencies cannot be resolved).
         :raises HttpStatusError: If the request fails for any reason other
             than the schema being rejected, e.g. a 504.
         """
+        mode = SCHEMA_APPLY_MODE(mode)
         _logger.info('Applying schema to project: %s', self.project_name)
         url = f'{self._base_url}models/_active'+('?dryRun=true' if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY else '')
         try:

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `isolation` given as a string was ignored: `put(..., isolation='none')` bisected instead, because modes were compared by identity with the enum. `Client.put`, `Gateway.load_data`, `Client.apply_schema` and `Gateway.load_project` now accept a mode as the enum or its string value, and treat both the same.
+- An invalid mode was accepted without complaint. For `apply_schema`, a mistyped `mode` (e.g. `'validate '`) applied the schema to the project instead of only validating it. An invalid `isolation`, `mode` or `validation_mode` now raises `ValueError` before any request is sent.
+- **An authentication or token failure part-way through a bulk operation lost track of what had been done.** If `put`, `Gateway.load_data` or `Gateway.dump_data` stopped on an `AuthenticationError` or `TokenRequestError`, its outcome so far was not reported anywhere. The error now carries that outcome as `result`, and is still raised as the same type.
+  - For `put`, a `PutResult` that accounts for every entity.
+  - For `load_data`, a `LoadResult` covering the classes loaded so far, the interrupted class's unwritten entities, and the classes not yet attempted.
+  - For `dump_data`, a `DumpResult` with the classes exported so far, the interrupted class in `failed`, and the classes not yet attempted. The files already exported are complete, so only the classes in `failed` and `remaining` need exporting again.
+
+### Added
+- `UnsentWrite` reports an entity that `put` did not write because it stopped early. The API never accepted it, so it can be resubmitted without creating a duplicate, even without an `id`.
+- `PutResult.unsent` lists those entities. Every submitted entity is now counted in exactly one of `loaded`, `failed`, `timed_out` and `unsent`. `LoadResult.unsent` (per class) and `LoadResult.unsent_count` do the same for `load_data`. `ok` is false when anything is unsent.
+- `LoadResult.remaining` and `DumpResult.remaining` list the classes not attempted because the load or export stopped early, in the order they would have been attempted. `ok` is false when any remain.
+- `AuthenticationError.result` and `TokenRequestError.result` hold the outcome of the `put`, `load_data` or `dump_data` the error interrupted, or `None`.
+
 ## [0.11.0] - 2026-10-27
 
 ### Fixed
