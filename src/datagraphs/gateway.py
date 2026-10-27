@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from datagraphs.client import AuthenticationError, FailedWrite, PutResult, TimedOutWrite, TokenRequestError
+from datagraphs.client import AuthenticationError, FailedWrite, PutResult, TimedOutWrite, TokenRequestError, UnsentWrite
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import ISOLATION_MODE, SCHEMA_APPLY_MODE, VALIDATION_MODE
@@ -60,6 +60,13 @@ class LoadResult:
     :ivar class_errors: Per class, the exception that stopped its file being
         loaded at all (e.g. a `json.JSONDecodeError` for invalid JSON, or a
         `ValueError` for a malformed entity ``id``).
+    :ivar unsent: Per class, the entities not written because the load
+        stopped early on an `AuthenticationError` or `TokenRequestError`
+        (see `PutResult.unsent`). Only a result attached to such an error (as
+        its ``result``) has any.
+    :ivar remaining: The classes not attempted because the load stopped
+        early, in the order they would have been loaded. Only a result
+        attached to an `AuthenticationError` or `TokenRequestError` has any.
     """
 
     loaded: int = 0
@@ -67,6 +74,8 @@ class LoadResult:
     failed: dict[str, list[FailedWrite]] = field(default_factory=dict)
     timed_out: dict[str, list[TimedOutWrite]] = field(default_factory=dict)
     class_errors: dict[str, Exception] = field(default_factory=dict)
+    unsent: dict[str, list[UnsentWrite]] = field(default_factory=dict)
+    remaining: list[str] = field(default_factory=list)
 
     @property
     def failed_count(self) -> int:
@@ -79,13 +88,18 @@ class LoadResult:
         return sum(len(timeouts) for timeouts in self.timed_out.values())
 
     @property
+    def unsent_count(self) -> int:
+        """The total number of entities not written because the load stopped early."""
+        return sum(len(unsent) for unsent in self.unsent.values())
+
+    @property
     def ok(self) -> bool:
         """True when every entity found was confirmed as written.
 
         Skipped classes do not affect this: a class with no data file has
         nothing to load.
         """
-        return not self.failed and not self.timed_out and not self.class_errors
+        return not self.failed and not self.timed_out and not self.class_errors and not self.unsent and not self.remaining
 
 @dataclass
 class DumpResult:
@@ -96,16 +110,21 @@ class DumpResult:
     :ivar failed: Per class, the exception that stopped it being exported.
         No file is written for a failed class, so a file from an earlier
         export is left as it was.
+    :ivar remaining: The classes not attempted because the export stopped
+        early, in the order they would have been exported. Only a result
+        attached to an `AuthenticationError` or `TokenRequestError` (as its
+        ``result``) has any; the class that error interrupted is in ``failed``.
     """
 
     exported: int = 0
     files: dict[str, Path] = field(default_factory=dict)
     failed: dict[str, Exception] = field(default_factory=dict)
+    remaining: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         """True when every class requested was exported in full."""
-        return not self.failed
+        return not self.failed and not self.remaining
 
 class Gateway:
     """Higher-level wrapper for deploying projects and bulk import/export of data."""
@@ -251,40 +270,62 @@ class Gateway:
         :returns: The outcome of the load, per class.
         :raises ValueError: If *isolation* is not an `ISOLATION_MODE` value.
         :raises AuthenticationError: If authentication fails; no further
-            classes are attempted.
+            classes are attempted. Its ``result`` is the `LoadResult` so far,
+            with the interrupted class's unwritten entities in ``unsent`` and
+            the classes not yet attempted in ``remaining``.
         :raises TokenRequestError: If an auth token cannot be obtained; no
-            further classes are attempted.
+            further classes are attempted. Its ``result`` is the `LoadResult`
+            so far, as for `AuthenticationError`.
         """
         isolation = ISOLATION_MODE(isolation)
         from_dir_path = Path(from_dir_path) if from_dir_path else Path()
         result = LoadResult()
-        datasets = self._client.get_datasets()
-        if class_name == Schema.ALL_CLASSES:
-            for dataset in datasets:
-                self._load_data_for_dataset(result, dataset, from_dir_path, isolation)
-        else:
-            dataset = next((d for d in datasets if class_name in d.classes), None)
-            if dataset is not None:
-                self._load_data_for_class(result, class_name, dataset.slug, isolation, from_dir_path, file_path)
-            else:
-                _logger.error('The class %s was not found in any dataset - cannot load data.', class_name)
-                result.skipped[class_name] = SkippedClass(SkipReason.NOT_IN_DATASET)
+        file_path = file_path if class_name != Schema.ALL_CLASSES else ""
+        try:
+            plan = self._classes_to_load(result, class_name)
+            for n, (plan_class, dataset_slug) in enumerate(plan):
+                try:
+                    self._load_data_for_class(result, plan_class, dataset_slug, isolation, from_dir_path, file_path)
+                except (AuthenticationError, TokenRequestError):
+                    result.remaining = [name for name, _ in plan[n + 1:]]
+                    raise
+        except (AuthenticationError, TokenRequestError) as e:
+            e.result = result
+            self._log_load_result(result)
+            raise
         self._log_load_result(result)
         return result
 
-    def _load_data_for_dataset(self, result: LoadResult, dataset: Dataset, from_dir_path: str | Path, isolation: ISOLATION_MODE) -> None:
-        """Load data for all non-base classes in a dataset."""
-        for dataset_class in dataset.classes:
-            if len(self._get_schema().find_subclasses(dataset_class)) == 0:
-                self._load_data_for_class(result, dataset_class, dataset.slug, isolation, from_dir_path)
-            else:
-                _logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
+    def _classes_to_load(self, result: LoadResult, class_name: str) -> list[tuple[str, str]]:
+        """The classes to load, in order, each with the slug of the dataset it loads into.
+
+        A single requested class that is in no dataset is recorded as skipped.
+        """
+        datasets = self._client.get_datasets()
+        if class_name != Schema.ALL_CLASSES:
+            dataset = next((d for d in datasets if class_name in d.classes), None)
+            if dataset is None:
+                _logger.error('The class %s was not found in any dataset - cannot load data.', class_name)
+                result.skipped[class_name] = SkippedClass(SkipReason.NOT_IN_DATASET)
+                return []
+            return [(class_name, dataset.slug)]
+        plan = []
+        for dataset in datasets:
+            for dataset_class in dataset.classes:
+                if len(self._get_schema().find_subclasses(dataset_class)) == 0:
+                    plan.append((dataset_class, dataset.slug))
+                else:
+                    _logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
+        return plan
 
     def _load_data_for_class(self, result: LoadResult, class_name: str, dataset_slug: str, isolation: ISOLATION_MODE, from_dir_path: str | Path = "", file_path: str | Path = "") -> None:
         """Load data for a specific class from a JSON file, accounting for it in *result*."""
         try:
             outcome = self._load_from_file(class_name, dataset_slug, isolation, from_dir_path, file_path)
-        except (AuthenticationError, TokenRequestError):
+        except (AuthenticationError, TokenRequestError) as e:
+            # Keep what the interrupted put did write before stopping.
+            if isinstance(e.result, PutResult):
+                self._record_put_result(result, class_name, e.result)
             raise
         except Exception as e:  # noqa: BLE001 - intentional: log the failing class, record the error, keep loading others
             _logger.error('Error loading data for %s: %s', class_name, str(e))
@@ -293,12 +334,17 @@ class Gateway:
         if isinstance(outcome, SkippedClass):
             result.skipped[class_name] = outcome
             return
-        put_result = outcome
+        self._record_put_result(result, class_name, outcome)
+
+    @staticmethod
+    def _record_put_result(result: LoadResult, class_name: str, put_result: PutResult) -> None:
         result.loaded += put_result.loaded
         if put_result.failed:
             result.failed[class_name] = put_result.failed
         if put_result.timed_out:
             result.timed_out[class_name] = put_result.timed_out
+        if put_result.unsent:
+            result.unsent[class_name] = put_result.unsent
 
     def _load_from_file(
         self,
@@ -334,16 +380,20 @@ class Gateway:
             _logger.info('Loaded %d entities (%d classes skipped)', result.loaded, len(result.skipped))
             return
         _logger.error(
-            'Data load incomplete: %d entities loaded, %d failed, %d timed out, %d classes errored, %d classes skipped',
-            result.loaded, result.failed_count, result.timed_out_count, len(result.class_errors), len(result.skipped),
+            'Data load incomplete: %d entities loaded, %d failed, %d timed out, %d not sent, %d classes errored, %d classes skipped, %d classes not attempted',
+            result.loaded, result.failed_count, result.timed_out_count, result.unsent_count, len(result.class_errors), len(result.skipped), len(result.remaining),
         )
         for class_name, failures in result.failed.items():
             _logger.error('   %s: %d failed: %s', class_name, len(failures), [f.describe() for f in failures])
         for class_name, timeouts in result.timed_out.items():
             _logger.error('   %s: %d timed out (may have been written - verify before reloading): %s',
                           class_name, len(timeouts), [t.describe() for t in timeouts])
+        for class_name, unsent in result.unsent.items():
+            _logger.error('   %s: %d not sent (safe to resubmit): %s', class_name, len(unsent), [u.describe() for u in unsent])
         for class_name, error in result.class_errors.items():
             _logger.error('   %s: not loaded: %s', class_name, error)
+        if result.remaining:
+            _logger.error('   not attempted, as the load stopped early: %s', result.remaining)
 
     def _map_data_project_urns(self, data: list[dict]) -> list[dict]:
         """Re-map URN project segments to match the current client project.
@@ -384,32 +434,53 @@ class Gateway:
         :param include_date_fields: Whether to include system date metadata.
         :returns: The outcome of the export, per class.
         :raises AuthenticationError: If authentication fails; no further
-            classes are attempted.
+            classes are attempted. Its ``result`` is the `DumpResult` so far,
+            with the interrupted class in ``failed`` and the classes not yet
+            attempted in ``remaining``.
         :raises TokenRequestError: If an auth token cannot be obtained; no
-            further classes are attempted.
+            further classes are attempted. Its ``result`` is the `DumpResult`
+            so far, as for `AuthenticationError`.
         """
         to_dir_path = Path(to_dir_path)
         to_dir_path.mkdir(parents=True, exist_ok=True)
         result = DumpResult()
-
-        if class_name == Schema.ALL_CLASSES:
-            datasets = self._client.get_datasets()
-            dataset_classes = [cls for d in datasets for cls in d.classes]
-            excluded_classes = [cls.strip() for cls in excluded_class_names.split(',')] if excluded_class_names else []
-            for dataset_class in dataset_classes:
-                if dataset_class in excluded_classes:
-                    continue
-                if len(self._get_schema().find_subclasses(dataset_class)) == 0:   
-                    self._dump_class(result, dataset_class, to_dir_path, include_date_fields)
+        try:
+            plan = self._classes_to_dump(class_name, excluded_class_names)
+            for n, plan_class in enumerate(plan):
+                try:
+                    self._dump_class(result, plan_class, to_dir_path, include_date_fields)
+                except (AuthenticationError, TokenRequestError) as e:
+                    result.failed[plan_class] = e
+                    result.remaining = plan[n + 1:]
+                    raise
+                if class_name == Schema.ALL_CLASSES:
                     time.sleep(self._wait_time_ms / 1000)
-        else:
-            self._dump_class(result, class_name, to_dir_path, include_date_fields)
+        except (AuthenticationError, TokenRequestError) as e:
+            e.result = result
+            self._log_dump_result(result)
+            raise
+        self._log_dump_result(result)
+        return result
+
+    def _classes_to_dump(self, class_name: str, excluded_class_names: str) -> list[str]:
+        """The classes to export, in order: every non-base, non-excluded class across all datasets, or just *class_name*."""
+        if class_name != Schema.ALL_CLASSES:
+            return [class_name]
+        excluded_classes = {cls.strip() for cls in excluded_class_names.split(',')} if excluded_class_names else set()
+        return [
+            dataset_class
+            for dataset in self._client.get_datasets()
+            for dataset_class in dataset.classes
+            if dataset_class not in excluded_classes and len(self._get_schema().find_subclasses(dataset_class)) == 0
+        ]
+
+    @staticmethod
+    def _log_dump_result(result: DumpResult) -> None:
         if result.ok:
             _logger.info('Exported %d entities from %d classes', result.exported, len(result.files))
-        else:
-            _logger.error('Data export incomplete: %d entities exported, %d classes failed: %s',
-                          result.exported, len(result.failed), sorted(result.failed))
-        return result
+            return
+        _logger.error('Data export incomplete: %d entities exported, %d classes failed: %s, %d classes not attempted: %s',
+                      result.exported, len(result.failed), sorted(result.failed), len(result.remaining), result.remaining)
 
     def _dump_class(self, result: DumpResult, class_name: str, to_dir_path: Path, include_date_fields: bool) -> None:
         """Export one class to its file, accounting for it in *result*."""

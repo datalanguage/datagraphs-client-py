@@ -17,6 +17,7 @@ from datagraphs.client import (
     QueryPage,
     TimedOutWrite,
     TokenRequestError,
+    UnsentWrite,
 )
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
@@ -1929,6 +1930,7 @@ class TestQueryEncoding:
         self.client.query(filters='type:Cat,Dog')
         assert '&filter=type:Cat,Dog' in requested_urls(self.client)[0]
 
+
 # Mode Value Tests
 #
 # A mode may be given as the enum or as its string value, and both must behave
@@ -1973,4 +1975,107 @@ class TestModeValues:
         with pytest.raises(ValueError):
             self.client.apply_schema(DatagraphsSchema.create_from(TestSchemaOperations.SCHEMA_DATA), mode)
         self.client._http_client.request.assert_not_called()
+
+
+# Interrupted Put Tests
+#
+# When put stops part-way on an authentication or token failure, the error
+# carries a result that accounts for every entity exactly once: what was
+# written, what failed or timed out, and - in unsent - what was not written.
+class TestInterruptedPut:
+
+    @pytest.fixture(scope="function", autouse=True)
+    def setup(self, get_client):
+        self.client = get_client('test_client_id', 'test_client_secret', batch_size=3)
+        self.entities = generate_test_data_list(7)
+
+    def token(self, mocker):
+        return create_response_mock(mocker, 200, {'token_type': TOKEN_TYPE, 'access_token': ACCESS_TOKEN})
+
+    def serve(self, mocker, decide) -> None:
+        """Answer each PUT with ``decide(ids) -> status``."""
+        self.client._http_client.request.side_effect = lambda method, url, **kwargs: create_response_mock(
+            mocker, decide([e['id'] for e in kwargs['json']]), {'errors': ['invalid']})
+
+    def assert_accounts_for_every_entity(self, result, loaded: int, failed: list[int], timed_out: list[int], unsent: list[int]) -> None:
+        assert result.loaded == loaded
+        assert [f.index for f in result.failed] == failed
+        assert [t.index for t in result.timed_out] == timed_out
+        assert result.unsent == [UnsentWrite(i, self.entities[i].get('id')) for i in unsent]
+        assert result.loaded + len(failed) + len(timed_out) + len(unsent) == len(self.entities)
+        assert not result.ok
+
+    def test_should_report_what_was_written_when_a_token_refresh_fails_part_way(self, mocker):
+        self.client._http_client.post.side_effect = [self.token(mocker), requests.exceptions.ReadTimeout('read timed out')]
+        self.serve(mocker, lambda ids: 401 if 'entity-3' in ids else 201)
+        with pytest.raises(TokenRequestError) as exc_info:
+            self.client.put('ds', self.entities)
+        self.assert_accounts_for_every_entity(exc_info.value.result, loaded=3, failed=[], timed_out=[], unsent=[3, 4, 5, 6])
+
+    def test_should_report_what_was_written_when_authentication_fails_part_way(self, mocker):
+        self.serve(mocker, lambda ids: 401 if 'entity-3' in ids else 201)
+        with pytest.raises(AuthenticationError) as exc_info:
+            self.client.put('ds', self.entities)
+        self.assert_accounts_for_every_entity(exc_info.value.result, loaded=3, failed=[], timed_out=[], unsent=[3, 4, 5, 6])
+
+    def test_should_keep_failures_and_timeouts_from_before_the_interruption(self, mocker):
+        def decide(ids):
+            if 'entity-0' in ids:
+                return 500
+            if 'entity-3' in ids:
+                return 504
+            return 401
+        self.serve(mocker, decide)
+        with pytest.raises(AuthenticationError) as exc_info:
+            self.client.put('ds', self.entities)
+        self.assert_accounts_for_every_entity(exc_info.value.result, loaded=0, failed=[0, 1, 2], timed_out=[3, 4, 5], unsent=[6])
+
+    def test_should_report_what_was_written_when_interrupted_during_isolation(self, mocker, get_client):
+        self.client = get_client('test_client_id', 'test_client_secret', batch_size=8)
+        self.entities = [{'name': f'n{i}', **({'id': f'entity-{i}'} if i % 2 else {})} for i in range(8)]
+        # n2 is invalid, so the batch is rejected and bisected: n4-n7 and n0-n1 are
+        # written and n2 is isolated as rejected, then n3, sent alone, meets a 401.
+        def side_effect(method, url, **kwargs):
+            names = [e['name'] for e in kwargs['json']]
+            if names == ['n3']:
+                return create_response_mock(mocker, 401)
+            return create_response_mock(mocker, 400 if 'n2' in names else 201, {'errors': ['invalid']})
+        self.client._http_client.request.side_effect = side_effect
+        with pytest.raises(AuthenticationError) as exc_info:
+            self.client.put('ds', self.entities)
+        self.assert_accounts_for_every_entity(exc_info.value.result, loaded=6, failed=[2], timed_out=[], unsent=[3])
+
+    def test_should_report_unresolved_parts_as_unsent_when_interrupted_mid_split(self, mocker, get_client):
+        # Both halves are sent before either is isolated: the first is rejected, the
+        # second meets a 401, so nothing has been written and every entity is unsent.
+        self.client = get_client('test_client_id', 'test_client_secret', batch_size=8)
+        self.entities = generate_test_data_list(8)
+        def side_effect(method, url, **kwargs):
+            ids = [e['id'] for e in kwargs['json']]
+            if len(ids) < 8 and 'entity-5' in ids:
+                return create_response_mock(mocker, 401)
+            return create_response_mock(mocker, 400 if 'entity-2' in ids else 201, {'errors': ['invalid']})
+        self.client._http_client.request.side_effect = side_effect
+        with pytest.raises(AuthenticationError) as exc_info:
+            self.client.put('ds', self.entities)
+        self.assert_accounts_for_every_entity(exc_info.value.result, loaded=0, failed=[], timed_out=[], unsent=list(range(8)))
+
+    def test_should_report_every_entity_as_unsent_when_the_first_token_request_fails(self, mocker):
+        self.client._http_client.post.side_effect = requests.exceptions.ConnectionError('reset')
+        with pytest.raises(TokenRequestError) as exc_info:
+            self.client.put('ds', self.entities)
+        self.assert_accounts_for_every_entity(exc_info.value.result, loaded=0, failed=[], timed_out=[], unsent=list(range(7)))
+        self.client._http_client.request.assert_not_called()
+
+    def test_should_log_the_partial_outcome(self, mocker, caplog):
+        self.serve(mocker, lambda ids: 401 if 'entity-3' in ids else 201)
+        with caplog.at_level(logging.ERROR), pytest.raises(AuthenticationError):
+            self.client.put('ds', self.entities)
+        assert 'Loaded 3 of 7 entities into dataset ds: 0 failed, 0 timed out, 4 not sent' in caplog.text
+
+    def test_should_have_nothing_unsent_when_put_completes(self, mocker):
+        self.serve(mocker, lambda ids: 201)
+        result = self.client.put('ds', self.entities)
+        assert result.unsent == []
+        assert result.ok
 

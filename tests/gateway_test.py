@@ -6,12 +6,12 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
-from datagraphs.client import AuthenticationError, FailedWrite, HttpStatusError, IncompleteReadError, PutResult, TimedOutWrite, TokenRequestError
+from datagraphs.client import AuthenticationError, FailedWrite, HttpStatusError, IncompleteReadError, PutResult, TimedOutWrite, TokenRequestError, UnsentWrite
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import ISOLATION_MODE, VALIDATION_MODE
 from datagraphs.gateway import Gateway as DatagraphsGateway
-from datagraphs.gateway import DumpResult, SkippedClass, SkipReason
+from datagraphs.gateway import DumpResult, LoadResult, SkippedClass, SkipReason
 from datagraphs.schema import Schema
 
 DATA_DIR = Path(__file__).parent / 'data'
@@ -192,6 +192,56 @@ class TestDumpData:
             gateway.dump_data(to_dir_path=WORKING_DIR)
         assert mock_client.get.call_count == 1
 
+    @pytest.mark.parametrize('error', [
+        AuthenticationError('Authentication failed after 3 attempts'),
+        TokenRequestError(None, ['read timed out'], 'Failed to obtain auth token: read timed out'),
+    ], ids=['authentication failed', 'token unavailable'])
+    def test_should_report_what_was_exported_when_interrupted(self, gateway, mock_client, mock_schema, error, caplog):
+        mock_client.get_datasets.return_value = [
+            Dataset(name='One', project='test-project', classes=['TypeA', 'Base', 'TypeB']),
+            Dataset(name='Two', project='test-project', classes=['TypeC', 'Excluded', 'TypeD']),
+        ]
+        mock_schema.find_subclasses.side_effect = lambda name: [{'name': 'Child'}] if name == 'Base' else []
+        def get(class_name, include_date_fields):
+            if class_name == 'TypeB':
+                raise error
+            return [{'id': f'urn:test:{class_name}:1'}, {'id': f'urn:test:{class_name}:2'}]
+        mock_client.get.side_effect = get
+        with caplog.at_level(logging.ERROR), pytest.raises(type(error)) as exc_info:
+            gateway.dump_data(to_dir_path=WORKING_DIR, excluded_class_names='Excluded')
+        result = exc_info.value.result
+        assert result == DumpResult(
+            exported=2,
+            files={'TypeA': WORKING_DIR / 'TypeA.json'},
+            failed={'TypeB': error},
+            remaining=['TypeC', 'TypeD'],  # not Base (exported via its subclasses) or Excluded
+        )
+        assert not result.ok
+        assert [c.kwargs['class_name'] for c in mock_client.get.call_args_list] == ['TypeA', 'TypeB']
+        assert sorted(f.name for f in WORKING_DIR.iterdir()) == ['TypeA.json']
+        assert "1 classes failed: ['TypeB'], 2 classes not attempted: ['TypeC', 'TypeD']" in caplog.text
+
+    def test_should_report_an_interrupted_single_class_export(self, gateway, mock_client):
+        error = TokenRequestError(503, ['unavailable'], 'unavailable')
+        mock_client.get.side_effect = error
+        with pytest.raises(TokenRequestError) as exc_info:
+            gateway.dump_data(to_dir_path=WORKING_DIR, class_name='TypeA')
+        assert exc_info.value.result == DumpResult(failed={'TypeA': error})
+
+    @pytest.mark.parametrize('failing', ['get_datasets', 'get_schema'])
+    def test_should_attach_an_empty_result_when_the_classes_to_export_cannot_be_read(self, gateway, mock_client, failing):
+        getattr(mock_client, failing).side_effect = AuthenticationError('denied')
+        with pytest.raises(AuthenticationError) as exc_info:
+            gateway.dump_data(to_dir_path=WORKING_DIR)
+        assert exc_info.value.result == DumpResult()
+        mock_client.get.assert_not_called()
+
+    def test_should_not_be_ok_with_classes_still_to_export(self):
+        assert not DumpResult(remaining=['TypeA']).ok
+
+    def test_should_not_be_ok_with_classes_still_to_load(self):
+        assert not LoadResult(remaining=['ClassA']).ok
+
     def test_should_create_a_file_with_the_permissions_the_umask_allows(self, gateway, mock_client):
         umask = os.umask(0)
         os.umask(umask)
@@ -359,6 +409,59 @@ class TestLoadDataOutcomes:
         assert result.ok
         assert result.skipped == {'ClassB': SkippedClass(SkipReason.NO_FILE, self.dir / 'ClassB.json')}
         assert result.loaded == len(self.data) * 2
+
+    @pytest.mark.parametrize('error_type', [AuthenticationError, TokenRequestError])
+    def test_should_report_what_was_loaded_when_a_class_is_interrupted(self, error_type, caplog):
+        interrupted = PutResult(loaded=2, failed=[FailedWrite(0, None, 400, ['invalid'])], unsent=[UnsentWrite(3, None), UnsentWrite(4, 'urn:b')])
+        def put(dataset_slug, data, **options):
+            if self.client.put.call_count == 2:
+                error = AuthenticationError('denied') if error_type is AuthenticationError else TokenRequestError(None, ['reset'], 'reset')
+                error.result = interrupted
+                raise error
+            return PutResult(loaded=len(data))
+        self.client.put.side_effect = put
+        with caplog.at_level(logging.ERROR), pytest.raises(error_type) as exc_info:
+            self.gateway.load_data(from_dir_path=self.dir)
+        result = exc_info.value.result
+        assert result.loaded == len(self.data) + 2
+        assert result.failed == {'ClassB': interrupted.failed}
+        assert result.unsent == {'ClassB': interrupted.unsent}
+        assert result.unsent_count == 2
+        assert not result.ok
+        assert result.remaining == ['ClassC']
+        assert self.client.put.call_count == 2
+        assert 'ClassB: 2 not sent (safe to resubmit)' in caplog.text
+
+    def test_should_not_be_ok_when_entities_were_left_unsent(self):
+        def put(dataset_slug, data, **options):
+            error = TokenRequestError(None, ['reset'], 'reset')
+            error.result = PutResult(loaded=len(data) - 1, unsent=[UnsentWrite(0, None)])
+            raise error
+        self.client.put.side_effect = put
+        with pytest.raises(TokenRequestError) as exc_info:
+            self.gateway.load_data(from_dir_path=self.dir)
+        result = exc_info.value.result
+        assert (result.failed, result.timed_out, result.class_errors) == ({}, {}, {})
+        assert not result.ok
+
+    def test_should_list_the_classes_not_attempted_across_datasets_in_load_order(self, mock_schema):
+        self.client.get_datasets.return_value = [
+            Dataset(name='One', project='test-project', classes=['ClassA', 'Base', 'ClassB']),
+            Dataset(name='Two', project='test-project', classes=['ClassC', 'ClassD']),
+        ]
+        mock_schema.find_subclasses.side_effect = lambda name: [{'name': 'Child'}] if name == 'Base' else []
+        for class_name in ('ClassD',):
+            (self.dir / f'{class_name}.json').write_text(json.dumps(self.data), encoding='utf-8')
+        self.client.put.side_effect = AuthenticationError('denied')
+        with pytest.raises(AuthenticationError) as exc_info:
+            self.gateway.load_data(from_dir_path=self.dir)
+        assert exc_info.value.result.remaining == ['ClassB', 'ClassC', 'ClassD']  # Base loads via its subclasses
+
+    def test_should_attach_an_empty_result_when_datasets_cannot_be_read_for_lack_of_a_token(self):
+        self.client.get_datasets.side_effect = TokenRequestError(503, ['unavailable'], 'unavailable')
+        with pytest.raises(TokenRequestError) as exc_info:
+            self.gateway.load_data(from_dir_path=self.dir)
+        assert exc_info.value.result == LoadResult()
 
     @pytest.mark.parametrize('isolation', ['bisect', 'individual', 'none'])
     def test_should_accept_an_isolation_mode_as_its_string_value(self, isolation):

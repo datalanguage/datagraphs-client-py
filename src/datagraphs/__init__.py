@@ -13,6 +13,7 @@ from datagraphs.client import (
     QueryPage,
     TimedOutWrite,
     TokenRequestError,
+    UnsentWrite,
 )
 from datagraphs.dataset import Dataset
 from datagraphs.gateway import DumpResult, Gateway, LoadResult, SkippedClass, SkipReason
@@ -39,5 +40,6 @@ __all__ = [
     "SkippedClass",
     "TimedOutWrite",
     "TokenRequestError",
+    "UnsentWrite",
     "__version__",
 ]
