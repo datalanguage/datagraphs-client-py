@@ -29,9 +29,20 @@ print(client.status())
 # Retrieve all entities of a given type
 products = client.get("Product")
 
-# Query with filters and pagination
+# Query one page, or page through every result
 results = client.query(q="Acme", page_size=50)
+page = client.query_page(filters="territory:GB")  # results, total_results, next_page_token
+everything = client.query_all(filters="territory:GB")
 ```
+
+Every read returns complete results or raises, so an empty list always means
+there was nothing to read. A failed request raises `HttpStatusError` (with its
+`status_code` and `errors`), a transport failure such as a timeout raises
+`DatagraphsError`, and a paged read whose pages do not add up to the reported
+total raises `IncompleteReadError`. Reads retry transient failures (HTTP 429,
+502, 503 and 504, connection errors and timeouts) up to `max_read_retries`
+times (default 3) before raising. Every request, including the auth token
+request, times out after `timeout` seconds (default `(10, 60)`: connect, read).
 
 ```python
 from datagraphs import Client
@@ -67,7 +78,11 @@ client = Client(
 gateway = Gateway(client)
 
 # Load / dump data via the Gateway
-gateway.dump_data("./backup")
+dumped = gateway.dump_data("./backup")
+if not dumped.ok:
+    # Classes not exported: dumped.failed holds the error for each. No file is
+    # written for a failed class.
+    raise SystemExit(1)
 result = gateway.load_data(from_dir_path="./backup")
 if not result.ok:
     # Entities not written, per class: result.failed holds a FailedWrite (id, HTTP

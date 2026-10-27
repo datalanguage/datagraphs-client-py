@@ -16,7 +16,7 @@ def get_gateway(config_key: str) -> DatagraphsGateway:
     gateway = DatagraphsGateway(client)
     return gateway
 
-def get_client(config_key: str) -> DatagraphsClient:
+def get_client(config_key: str, batch_size: int = DatagraphsClient.DEFAULT_BATCH_SIZE) -> DatagraphsClient:
     # Try local config file first (for local development)
     if os.path.exists(config_file_location):
         with open(config_file_location, 'r') as config_file:
@@ -27,7 +27,8 @@ def get_client(config_key: str) -> DatagraphsClient:
                     project_name=config['project_name'],
                     api_key=config['api_key'],
                     client_id=config['client_id'],
-                    client_secret=config['client_secret']
+                    client_secret=config['client_secret'],
+                    batch_size=batch_size,
                 )
 
     # Fall back to environment variables (for CI)
@@ -37,7 +38,8 @@ def get_client(config_key: str) -> DatagraphsClient:
             project_name=os.environ['PROJECT_NAME'],
             api_key=api_key,
             client_id=os.environ['CLIENT_ID'],
-            client_secret=os.environ['CLIENT_SECRET']
+            client_secret=os.environ['CLIENT_SECRET'],
+            batch_size=batch_size,
         )
 
     raise RuntimeError(

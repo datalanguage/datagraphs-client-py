@@ -6,12 +6,12 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
-from datagraphs.client import AuthenticationError, FailedWrite, PutResult, TimedOutWrite
+from datagraphs.client import AuthenticationError, FailedWrite, HttpStatusError, IncompleteReadError, PutResult, TimedOutWrite, TokenRequestError
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import VALIDATION_MODE
 from datagraphs.gateway import Gateway as DatagraphsGateway
-from datagraphs.gateway import SkippedClass, SkipReason
+from datagraphs.gateway import DumpResult, SkippedClass, SkipReason
 from datagraphs.schema import Schema
 
 DATA_DIR = Path(__file__).parent / 'data'
@@ -79,7 +79,8 @@ class TestDumpData:
         with open(output_file, 'r', encoding='utf-8') as f:
             written_data = json.load(f)
         assert written_data == substance_role_data
-        assert result == {"exported": len(substance_role_data)}
+        assert result == DumpResult(exported=len(substance_role_data), files={'SubstanceRole': output_file})
+        assert result.ok
 
     def test_should_dump_all_classes_from_all_datasets(self, gateway, mock_client, substance_role_data):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['SubstanceRole', 'BufferZoneType'])
@@ -89,7 +90,10 @@ class TestDumpData:
         mock_client.get_datasets.assert_called_once()
         mock_client.get.assert_any_call(class_name='SubstanceRole', include_date_fields=False)
         mock_client.get.assert_any_call(class_name='BufferZoneType', include_date_fields=False)
-        assert result == {"exported": len(substance_role_data) * 2}
+        assert result == DumpResult(
+            exported=len(substance_role_data) * 2,
+            files={name: WORKING_DIR / f'{name}.json' for name in ('SubstanceRole', 'BufferZoneType')},
+        )
 
     def test_should_skip_baseclasses_when_dumping_all(self, gateway, mock_client, mock_schema):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['BaseClass', 'SubstanceRole'])
@@ -147,6 +151,68 @@ class TestDumpData:
         output_file = WORKING_DIR / 'PathTest.json'
         assert output_file.exists()
         os.remove(output_file)
+
+    @pytest.mark.parametrize('error', [
+        HttpStatusError(504, ['timeout'], 'Request failed with status 504'),
+        IncompleteReadError(5, 4, 'Read 4 results, but the API reported 5'),
+    ], ids=['request failed', 'incomplete read'])
+    def test_should_report_a_class_that_cannot_be_read_and_export_the_rest(self, gateway, mock_client, error):
+        mock_client.get_datasets.return_value = [Dataset(name='DS', project='test-project', classes=['TypeA', 'TypeB', 'TypeC'])]
+        mock_client.get.side_effect = lambda class_name, include_date_fields: (_ for _ in ()).throw(error) if class_name == 'TypeB' else [{'id': f'urn:test:{class_name}:1'}]
+        result = gateway.dump_data(to_dir_path=WORKING_DIR)
+        assert result.exported == 2
+        assert result.failed == {'TypeB': error}
+        assert sorted(result.files) == ['TypeA', 'TypeC']
+        assert not result.ok
+        assert sorted(f.name for f in WORKING_DIR.iterdir()) == ['TypeA.json', 'TypeC.json']
+
+    def test_should_leave_an_earlier_export_untouched_when_a_class_cannot_be_read(self, gateway, mock_client):
+        earlier = WORKING_DIR / 'TypeA.json'
+        earlier.write_text('[{"id": "urn:test:TypeA:old"}]', encoding='utf-8')
+        mock_client.get.side_effect = HttpStatusError(400, ['bad filter'], 'Request failed with status 400')
+        result = gateway.dump_data(to_dir_path=WORKING_DIR, class_name='TypeA')
+        assert result == DumpResult(failed={'TypeA': mock_client.get.side_effect})
+        assert earlier.read_text(encoding='utf-8') == '[{"id": "urn:test:TypeA:old"}]'
+        assert [f.name for f in WORKING_DIR.iterdir()] == ['TypeA.json']
+
+    def test_should_leave_no_partial_file_when_writing_fails(self, gateway, mock_client):
+        mock_client.get.return_value = [{'id': 'urn:test:TypeA:1', 'value': object()}]  # not JSON serialisable
+        result = gateway.dump_data(to_dir_path=WORKING_DIR, class_name='TypeA')
+        assert isinstance(result.failed['TypeA'], TypeError)
+        assert list(WORKING_DIR.iterdir()) == []
+
+    @pytest.mark.parametrize('error', [
+        AuthenticationError('Authentication failed after 3 attempts'),
+        TokenRequestError(503, ['unavailable'], 'Failed to obtain auth token: status 503'),
+    ], ids=['authentication failed', 'token unavailable'])
+    def test_should_stop_when_no_token_can_be_had(self, gateway, mock_client, error):
+        mock_client.get_datasets.return_value = [Dataset(name='DS', project='test-project', classes=['TypeA', 'TypeB'])]
+        mock_client.get.side_effect = error
+        with pytest.raises(type(error)):
+            gateway.dump_data(to_dir_path=WORKING_DIR)
+        assert mock_client.get.call_count == 1
+
+    def test_should_create_a_file_with_the_permissions_the_umask_allows(self, gateway, mock_client):
+        umask = os.umask(0)
+        os.umask(umask)
+        mock_client.get.return_value = []
+        gateway.dump_data(to_dir_path=WORKING_DIR, class_name='TypeA')
+        assert (WORKING_DIR / 'TypeA.json').stat().st_mode & 0o777 == 0o666 & ~umask
+
+    def test_should_keep_the_permissions_of_the_file_it_replaces(self, gateway, mock_client):
+        earlier = WORKING_DIR / 'TypeA.json'
+        earlier.write_text('[]', encoding='utf-8')
+        earlier.chmod(0o640)
+        mock_client.get.return_value = [{'id': 'urn:test:TypeA:1'}]
+        gateway.dump_data(to_dir_path=WORKING_DIR, class_name='TypeA')
+        assert earlier.stat().st_mode & 0o777 == 0o640
+        assert json.loads(earlier.read_text(encoding='utf-8')) == [{'id': 'urn:test:TypeA:1'}]
+
+    def test_should_log_a_summary_when_classes_are_not_exported(self, gateway, mock_client, caplog):
+        mock_client.get.side_effect = HttpStatusError(504, ['timeout'], 'Request failed with status 504')
+        with caplog.at_level(logging.ERROR):
+            gateway.dump_data(to_dir_path=WORKING_DIR, class_name='TypeA')
+        assert "Data export incomplete: 0 entities exported, 1 classes failed: ['TypeA']" in caplog.text
 
 
 # ---------- load_data ----------
@@ -294,9 +360,13 @@ class TestLoadDataOutcomes:
         assert result.skipped == {'ClassB': SkippedClass(SkipReason.NO_FILE, self.dir / 'ClassB.json')}
         assert result.loaded == len(self.data) * 2
 
-    def test_should_stop_and_raise_when_authentication_fails(self):
-        self.client.put.side_effect = AuthenticationError('denied')
-        with pytest.raises(AuthenticationError):
+    @pytest.mark.parametrize('error', [
+        AuthenticationError('denied'),
+        TokenRequestError(None, ['read timed out'], 'Failed to obtain auth token: read timed out'),
+    ], ids=['authentication failed', 'token unavailable'])
+    def test_should_stop_and_raise_when_no_token_can_be_had(self, error):
+        self.client.put.side_effect = error
+        with pytest.raises(type(error)):
             self.gateway.load_data(from_dir_path=self.dir)
         assert self.client.put.call_count == 1
 

@@ -90,4 +90,5 @@ class TestGatewayDataOperations:
         self.client.put('pets', get_data('Dog'))
         stats = self.gateway.dump_data(to_dir_path=str(WORKING_DIR), class_name='Dog')
         dogs = read_json('Dog')
-        assert stats['exported'] == len(dogs)
+        assert stats.ok
+        assert stats.exported == len(dogs)

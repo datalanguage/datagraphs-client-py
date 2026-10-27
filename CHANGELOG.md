@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Reads quietly returned incomplete data.** Except for `put`, a failed request was treated as a success: a 504 was logged and read as an empty response, and a 400 returned its error body as the result. Every request now raises on failure, so an empty result always means there was nothing to read.
+  - `Client.get` returned `[]` when its first page failed, and returned the error dict on a 400. When a later page failed it either dropped that page without a word or raised `KeyError`, losing everything read so far.
+  - `Client.get` decided when to stop from the page size it requested. If the API served fewer results per page than that, it stopped early. It now pages until it has read every result.
+  - `Client.query` returned `[]` on a 504 or 400.
+  - GQL queries (`Client.query(gql=...)`) always returned `[]`: the response body of a POST was never read, and the rows were looked for under `data` instead of `results`.
+  - `Client.get_schema` returned an empty schema on a 504.
+  - `Client.apply_schema` reported success on a 504.
+  - `Client.get_datasets` returned `[]` on a 504, so `tear_down` did nothing and `apply_datasets` tried to create every dataset again. It also read only the first 1,000 datasets.
+  - `Gateway.dump_data` wrote a 400's error body to the class's file as if it were data.
+- **Requests could hang forever.** No request had a timeout. Every request, including the auth token request, now uses `timeout`. A `put` batch whose read times out is reported in `PutResult.timed_out`; one that cannot connect is reported in `PutResult.failed`, since it was never sent.
+- A failed auth token request was always reported as `AuthenticationError`, even for a timeout or a 5xx. Only a 400, 401 or 403 from the token endpoint now raises `AuthenticationError`. Any other failure raises `TokenRequestError`.
+
+### Added
+- `Client.query_page` returns one page of search results as a `QueryPage`: its `results`, `total_results`, `next_page_token`, `previous_page_token` and `facets`.
+- `Client.query_all` reads every page of a search. It pages by `nextPageToken`, since page numbers cannot reach past the first 10,000 results.
+- `IncompleteReadError` is raised when the pages of a paged read (`get`, `query_all`, `get_datasets`) do not add up to the `totalResults` the API reported. It is also raised when a page repeats a result's `id`, or reports a different total from the first page, since either means the data changed during the read. It carries `expected` and `received` counts.
+- `TokenRequestError` is raised when an auth token cannot be obtained for a reason other than rejected credentials, such as a timeout, a 5xx or a malformed response. It has the token endpoint's `status_code` (`None` if no response arrived) and `errors`. The request that needed the token was never sent: `put`, `Gateway.load_data` and `Gateway.dump_data` stop and raise it, as they do for `AuthenticationError`, rather than reporting unsent writes as timed out. A read retries it like any other transient failure.
+- `Client` takes `timeout`, either one number of seconds or a `(connect, read)` pair. The default is `Client.DEFAULT_TIMEOUT_S`, `(10, 60)`.
+- `Client` takes `max_read_retries` (default 3). A GET that fails with HTTP 429, 502, 503 or 504, a connection error, a timeout or a truncated body is retried that many times. This includes a failure to get the token the GET needs. Retries use jittered exponential backoff (about 1s, 2s, 4s), or the `Retry-After` delay capped at 30s. Writes, GQL queries and `status()` are never retried.
+- `HttpStatusError.retry_after_s` holds the response's `Retry-After` delay, if it had one.
+- `DumpResult` reports the outcome of `Gateway.dump_data`: `exported`, `files` per class, `failed` per class, and `ok`.
+- The client reuses connections across requests through a `requests.Session`. The session also keeps any cookies the API sets.
+
+### Changed
+- **Breaking:** Reads raise instead of returning an empty or error result. A failed request raises `HttpStatusError`, a transport failure raises `DatagraphsError` with the `requests` exception as its `__cause__`, and a 2xx response that is empty or malformed raises `DatagraphsError`. This applies to `get`, `query`, `query_page`, `query_all`, `get_schema` and `get_datasets`. `status()` still returns `'unknown'` when the service is unavailable.
+- **Breaking:** `Client.delete`, `create_dataset`, `update_dataset`, `clear_dataset`, `clear_class_from_dataset`, `drop_dataset` and `tear_down` raise `HttpStatusError` on any failure, including a 504. `delete` no longer returns the error body of a 400. `apply_datasets` still tolerates a 504 or read timeout when it creates or updates a dataset, because it then polls to confirm the dataset was applied.
+- **Breaking:** `Client.apply_schema` raises `HttpStatusError` on any failure other than the 400 that reports the schema's blocking dependencies.
+- **Breaking:** `Gateway.dump_data` returns a `DumpResult` instead of `{"exported": n}`. Use `result.exported` for the count, and check `result.ok`. A class that cannot be read is reported in `result.failed` and no file is written for it, so a file from an earlier export is left as it was. A file is written under a temporary name and then renamed, so it is never left half-written. It keeps the permissions of the file it replaces, or gets those the umask allows. An `AuthenticationError` or `TokenRequestError` stops the export.
+
 ## [0.9.0] - 2026-10-26
 
 ### Added
