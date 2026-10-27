@@ -8,11 +8,14 @@ from datagraphs.client import (
     DatagraphsError,
     FailedWrite,
     HttpStatusError,
+    IncompleteReadError,
     PutResult,
+    QueryPage,
     TimedOutWrite,
+    TokenRequestError,
 )
 from datagraphs.dataset import Dataset
-from datagraphs.gateway import Gateway, LoadResult, SkippedClass, SkipReason
+from datagraphs.gateway import DumpResult, Gateway, LoadResult, SkippedClass, SkipReason
 from datagraphs.schema import Schema
 
 __version__ = version("pydatagraphs")
@@ -23,14 +26,18 @@ __all__ = [
     "Client",
     "DatagraphsError",
     "Dataset",
+    "DumpResult",
     "FailedWrite",
     "Gateway",
     "HttpStatusError",
+    "IncompleteReadError",
     "LoadResult",
     "PutResult",
+    "QueryPage",
     "Schema",
     "SkipReason",
     "SkippedClass",
     "TimedOutWrite",
+    "TokenRequestError",
     "__version__",
 ]

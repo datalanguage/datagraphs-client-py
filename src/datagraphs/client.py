@@ -2,8 +2,10 @@
 
 import json
 import logging
+import random
 import time
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum, auto
@@ -29,12 +31,68 @@ class HttpStatusError(DatagraphsError):
     :ivar status_code: The HTTP status code of the response.
     :ivar errors: The error details reported by the API (or the raw response
         text when the body carries no structured errors).
+    :ivar retry_after_s: The delay in seconds the API asked for before a
+        retry (its ``Retry-After`` header), or ``None`` if it gave none.
     """
 
-    def __init__(self, status_code: int, errors: list[Any], message: str) -> None:
+    def __init__(self, status_code: int, errors: list[Any], message: str, retry_after_s: float | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.errors = errors
+        self.retry_after_s = retry_after_s
+
+class TokenRequestError(DatagraphsError):
+    """Raised when an auth token cannot be obtained for a reason other than rejected credentials.
+
+    The token endpoint failed or could not be reached, so the request that
+    needed the token was never sent.
+
+    :ivar status_code: The token endpoint's HTTP status, or ``None`` when no
+        response was received (the underlying ``requests`` exception, e.g. a
+        ``ReadTimeout``, is then the ``__cause__``).
+    :ivar errors: The error details for the failure.
+    """
+
+    def __init__(self, status_code: int | None, errors: list[Any], message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.errors = errors
+
+class IncompleteReadError(DatagraphsError):
+    """Raised when a paged read does not return exactly the results the API reported.
+
+    Every page request succeeded, but the pages did not add up to the
+    ``totalResults`` the first page reported: the pages ran out early, held
+    more results than reported, or repeated a result. This usually means the
+    data changed while it was being read, so reading it again is the remedy.
+
+    :ivar expected: The ``totalResults`` reported by the first page.
+    :ivar received: The number of results received before the read stopped.
+    """
+
+    def __init__(self, expected: int, received: int, message: str) -> None:
+        super().__init__(message)
+        self.expected = expected
+        self.received = received
+
+@dataclass(frozen=True)
+class QueryPage:
+    """One page of search results, as returned by `Client.query_page`.
+
+    :ivar results: The results on this page.
+    :ivar total_results: The number of results across all pages.
+    :ivar next_page_token: The token to pass as ``next_page_token`` to fetch
+        the next page, or ``None`` if the API gave none.
+    :ivar previous_page_token: The token to pass as ``previous_page_token``
+        to fetch the previous page, or ``None`` if the API gave none.
+    :ivar facets: The facet buckets, when facets were requested.
+    """
+
+    results: list[dict[str, Any]]
+    total_results: int
+    next_page_token: str | None = None
+    previous_page_token: str | None = None
+    facets: list[dict[str, Any]] | None = None
 
 @dataclass(frozen=True)
 class _SubmittedEntity:
@@ -135,7 +193,11 @@ _TEXT_REPLACEMENTS = {
 class Client:
     """Low-level HTTP client for the DataGraphs REST API.
 
-    Handles authentication, pagination, and batched writes.
+    Handles authentication, pagination, and batched writes. Every read either
+    returns complete results or raises: a failed request raises
+    `HttpStatusError` (or `DatagraphsError` for a transport failure such as a
+    timeout), and a paged read whose pages do not add up raises
+    `IncompleteReadError`. An empty list always means there was nothing to read.
     """
 
     _PROD_URL = "https://api.datagraphs.io/"
@@ -145,6 +207,10 @@ class Client:
 
     DEFAULT_BATCH_SIZE = 100
     DEFAULT_WAIT_TIME_MS = 200
+    # (connect, read) in seconds. The read timeout is generous, so that a slow
+    # request normally ends with the API's own 504 rather than a client timeout.
+    DEFAULT_TIMEOUT_S = (10.0, 60.0)
+    DEFAULT_MAX_READ_RETRIES = 3
     _DEFAULT_FACET_SIZE = 10
     _MAX_AUTH_RETRIES = 2
     _DATASETS_TIMEOUT_S = 300
@@ -158,14 +224,26 @@ class Client:
     _POLL_SLOW_INTERVAL_S = 5
 
     # HTTP status codes
-    _HTTP_OK = 200
-    _HTTP_CREATED = 201
-    _HTTP_NO_CONTENT = 204
     _HTTP_BAD_REQUEST = 400
     _HTTP_UNAUTHORIZED = 401
     _HTTP_FORBIDDEN = 403
-    _HTTP_NOT_FOUND = 404
     _HTTP_GATEWAY_TIMEOUT = 504
+    _HTTP_SUCCESS = range(200, 300)
+    _AUTH_REJECTED = frozenset({400, 401, 403})
+    # Transient statuses on which an idempotent read is retried.
+    _RETRYABLE_READ_STATUSES = frozenset({429, 502, 503, 504})
+    # Exponential backoff between read retries: 1s, 2s, 4s... capped at 30s,
+    # each jittered to between half and all of that, so that concurrent
+    # clients do not retry in lockstep. A Retry-After header overrides it.
+    # Transport failures on which an idempotent read is retried. A
+    # ChunkedEncodingError is a response body cut off part-way.
+    _TRANSIENT_TRANSPORT_ERRORS = (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.ChunkedEncodingError,
+    )
+    _RETRY_BASE_DELAY_S = 1.0
+    _RETRY_MAX_DELAY_S = 30.0
     _HTTP_CLIENT_ERRORS = range(400, 500)
     # 4xx statuses that say nothing about the payload's content, so resubmitting
     # a rejected batch entity by entity cannot help (and, for 429, would worsen it).
@@ -182,7 +260,9 @@ class Client:
         client_id: str = "", 
         client_secret: str = "", 
         batch_size: int = DEFAULT_BATCH_SIZE, 
-        service_url: str = _PROD_URL
+        service_url: str = _PROD_URL,
+        timeout: float | tuple[float, float] = DEFAULT_TIMEOUT_S,
+        max_read_retries: int = DEFAULT_MAX_READ_RETRIES,
     ) -> None:
         """Initialise the DataGraphs client.
 
@@ -192,11 +272,23 @@ class Client:
         :param client_secret: OAuth client secret (required for write operations).
         :param batch_size: Number of items to process in each batch.
         :param service_url: Base URL for the API service.
+        :param timeout: Seconds to wait for every request, including the auth
+            token request: either one value for both connecting and reading,
+            or a ``(connect, read)`` pair. A request that exceeds it raises.
+        :param max_read_retries: How many times a GET request is retried after
+            a transient failure (HTTP 429, 502, 503 or 504, a connection error
+            or a timeout) before the failure is raised. ``0`` disables retries.
+            Writes and GQL queries are never retried.
         """
         if project_name is None or len(project_name) == 0:
             raise ValueError("project_name is required")
         if api_key is None or len(api_key) == 0:
             raise ValueError("api_key is required")
+        timeouts = timeout if isinstance(timeout, tuple) else (timeout,)
+        if len(timeouts) not in (1, 2) or not all(t > 0 for t in timeouts):
+            raise ValueError(f"timeout must be a positive number or a (connect, read) pair of them, not {timeout!r}")
+        if max_read_retries < 0:
+            raise ValueError(f"max_read_retries must not be negative, not {max_read_retries}")
         self.project_name = self._sanitise_text(project_name)
         self._api_key = self._sanitise_text(api_key)
         self._client_id = self._sanitise_text(client_id)
@@ -204,7 +296,11 @@ class Client:
         self._batch_size = batch_size
         service_url = self._sanitise_text(service_url)
         self._service_url = service_url if service_url.endswith('/') else f'{service_url}/'
-        self._http_client = requests
+        self._timeout = timeout
+        self._max_read_retries = max_read_retries
+        # A session reuses connections across requests, sparing a TLS handshake
+        # for every page of a paged read.
+        self._http_client = requests.Session()
         self._wait_time_ms = self.DEFAULT_WAIT_TIME_MS
         self._auth_token = ''
 
@@ -242,58 +338,50 @@ class Client:
                 response = self._http_client.post(
                     f'{self._service_url}{self._AUTH_URL_SUFFIX}',
                     headers=headers, 
-                    data=json.dumps(body)
+                    data=json.dumps(body),
+                    timeout=self._timeout,
                 )
-                response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                # A transport failure says nothing about the credentials, so it
+                # is not an AuthenticationError.
+                raise TokenRequestError(None, [str(e)], f"Failed to obtain auth token: {e}") from e
+            status = response.status_code
+            if status in self._AUTH_REJECTED:
+                raise AuthenticationError(f"Failed to obtain auth token: credentials rejected with status {status}: {response.text}")
+            if status not in self._HTTP_SUCCESS:
+                raise TokenRequestError(status, self._extract_errors(response), f"Failed to obtain auth token: status {status}: {response.text}")
+            try:
                 data = response.json()
                 self._auth_token = f"{data['token_type']} {data['access_token']}"
-            except requests.exceptions.RequestException as e:
-                raise AuthenticationError(f"Failed to obtain auth token: {e}")
+            except (ValueError, KeyError, TypeError) as e:
+                raise TokenRequestError(status, [response.text], f"Failed to obtain auth token: unexpected response: {response.text}") from e
         return self._auth_token
 
-    def _request(self, method: HTTP, url: str, _retry_count: int = 0, strict: bool = False, **kwargs) -> dict[str, Any] | None:
-        """Execute an HTTP request with automatic auth retry.
+    def _request(self, method: HTTP, url: str, lang: str = 'all', _retry_count: int = 0, **kwargs) -> requests.Response:
+        """Execute an HTTP request with automatic auth retry, raising on any failure.
+
+        The headers, including any auth token, are built afresh for every
+        attempt, so a token obtained or refreshed for one attempt is used by it.
 
         :param method: The HTTP method to use.
         :param url: The request URL.
+        :param lang: The language to request results in.
         :param _retry_count: Internal retry counter (do not set externally).
-        :param strict: When True, every non-success status raises
-            `HttpStatusError`, rather than a 400 returning its error body and a
-            504 being logged and treated as success.
         :param kwargs: Additional arguments forwarded to the HTTP client.
-        :returns: Parsed JSON response for GET requests, or ``None`` for
-            mutating requests.
+        :returns: The response, which always has a 2xx status.
         :raises AuthenticationError: If authentication fails after max retries.
-        :raises HttpStatusError: If the API responds with a failure status.
-        :raises DatagraphsError: If the request fails for any other reason.
+        :raises TokenRequestError: If an auth token cannot be obtained; the
+            request itself was then never sent.
+        :raises HttpStatusError: If the API responds with any other non-2xx status.
+        :raises DatagraphsError: If the request fails for any other reason,
+            with the underlying ``requests`` exception (e.g. a ``ReadTimeout``)
+            as its ``__cause__``.
         """
+        headers = self._get_headers(lang)
+        if method in [HTTP.PUT, HTTP.POST]:
+            headers['Content-Type'] = 'application/json'
         try:
-            if 'headers' in kwargs and method in [HTTP.PUT, HTTP.POST]:
-                kwargs['headers']['Content-Type'] = 'application/json'
-            response = self._http_client.request(str(method), url, **kwargs)
-            status = response.status_code
-            if status in [self._HTTP_OK, self._HTTP_CREATED, self._HTTP_NO_CONTENT]:
-                return response.json() if method == HTTP.GET else {}
-            elif status in [self._HTTP_UNAUTHORIZED, self._HTTP_FORBIDDEN]:
-                if _retry_count < self._MAX_AUTH_RETRIES:
-                    if 'headers' in kwargs and 'Authorization' in kwargs['headers']:
-                        kwargs['headers']['Authorization'] = self._get_auth_token(force_refresh=True)
-                    return self._request(method, url, _retry_count=_retry_count + 1, strict=strict, **kwargs)
-                else:
-                    raise AuthenticationError(f'Authentication failed after {self._MAX_AUTH_RETRIES+1} attempts')
-            elif strict:
-                raise HttpStatusError(status, self._extract_errors(response), f"Request failed with status {status}: {response.text}")
-            elif status == self._HTTP_BAD_REQUEST:
-                body = response.json() if response.content else {}
-                if 'message' in body and 'errors' not in body:
-                    return {'errors': [body['message']]}
-                else:
-                    return body
-            elif status == self._HTTP_GATEWAY_TIMEOUT:
-                _logger.warning("%s - %s: continuing processing, but try a smaller batch size...", response.reason, response.text)
-                return {}
-            else:
-                raise HttpStatusError(status, self._extract_errors(response), f"Request failed with status {status}: {response.text}")
+            response = self._http_client.request(str(method), url, headers=headers, timeout=self._timeout, **kwargs)
         except UnicodeError as e:
             # Strict in what we send: a value escaped sanitisation and cannot be
             # encoded into the HTTP request (latin-1 header serialisation). Surface
@@ -306,6 +394,92 @@ class Client:
             ) from e
         except requests.exceptions.RequestException as e:
             raise DatagraphsError(f"Request failed: {e}") from e
+        status = response.status_code
+        if status in self._HTTP_SUCCESS:
+            return response
+        if status in [self._HTTP_UNAUTHORIZED, self._HTTP_FORBIDDEN]:
+            if _retry_count < self._MAX_AUTH_RETRIES:
+                if self._has_oauth_credentials():
+                    self._get_auth_token(force_refresh=True)
+                return self._request(method, url, lang, _retry_count=_retry_count + 1, **kwargs)
+            raise AuthenticationError(f'Authentication failed after {self._MAX_AUTH_RETRIES+1} attempts')
+        raise HttpStatusError(status, self._extract_errors(response), f"Request failed with status {status}: {response.text}",
+                              retry_after_s=self._retry_after_s(response))
+
+    def _send(self, method: HTTP, url: str, **kwargs) -> None:
+        """Execute a request whose response body is not needed, raising on any failure."""
+        self._request(method, url, **kwargs)
+
+    def _read_json(self, method: HTTP, url: str, retries: int | None = None, **kwargs) -> Any:
+        """Execute a request and return its JSON body, raising on any failure.
+
+        A GET is idempotent, so one that fails transiently is retried, with
+        backoff, before the failure is raised.
+
+        :param retries: How many times to retry a transient failure: by
+            default ``max_read_retries`` for a GET, and none otherwise.
+        :raises DatagraphsError: If the request fails, or a successful response
+            has an empty or unparseable body.
+        """
+        if retries is None:
+            retries = self._max_read_retries if method == HTTP.GET else 0
+        attempts = 1 + retries
+        for attempt in range(1, attempts + 1):
+            try:
+                response = self._request(method, url, **kwargs)
+                break
+            except DatagraphsError as e:
+                if attempt == attempts or not self._is_transient(e):
+                    raise
+                delay_s = self._retry_delay_s(attempt, e)
+                _logger.warning('Request failed (%s) - retrying in %.1fs (attempt %d of %d): %s %s',
+                                e, delay_s, attempt + 1, attempts, method, url)
+                time.sleep(delay_s)
+        if not response.content:
+            raise DatagraphsError(f"Response to {method} {url} has no body (status {response.status_code})")
+        try:
+            return response.json()
+        except ValueError as e:
+            raise DatagraphsError(f"Response to {method} {url} is not valid JSON: {response.text[:200]}") from e
+
+    def _is_transient(self, error: DatagraphsError) -> bool:
+        """Whether *error* is a failure that retrying the same read could cure."""
+        if isinstance(error, AuthenticationError):
+            return False
+        if isinstance(error, (HttpStatusError, TokenRequestError)) and error.status_code is not None:
+            return error.status_code in self._RETRYABLE_READ_STATUSES
+        return isinstance(error.__cause__, self._TRANSIENT_TRANSPORT_ERRORS)
+
+    def _retry_delay_s(self, attempt: int, error: DatagraphsError) -> float:
+        """The delay before retry number *attempt*, honouring any Retry-After the API sent."""
+        if isinstance(error, HttpStatusError) and error.retry_after_s is not None:
+            return min(error.retry_after_s, self._RETRY_MAX_DELAY_S)
+        backoff_s = min(self._RETRY_BASE_DELAY_S * 2 ** (attempt - 1), self._RETRY_MAX_DELAY_S)
+        return random.uniform(backoff_s / 2, backoff_s)  # noqa: S311 - jitter, not cryptography
+
+    @staticmethod
+    def _retry_after_s(response: requests.Response) -> float | None:
+        """The delay in seconds from a response's ``Retry-After`` header, if it gives one in seconds."""
+        value = response.headers.get('Retry-After')
+        if isinstance(value, str):
+            try:
+                return max(float(value), 0.0)
+            except ValueError:
+                pass  # an HTTP-date: fall back to the backoff schedule
+        return None
+
+    def _is_timeout(self, error: Exception) -> bool:
+        """Whether *error* means a request was sent but no response arrived in time.
+
+        The API's 504 and a client read timeout both mean the request may
+        still have completed server-side. A connect timeout does not: the
+        request was never sent.
+        """
+        if isinstance(error, TokenRequestError):
+            return False  # the token request failed, so the request itself was never sent
+        if isinstance(error, HttpStatusError):
+            return error.status_code == self._HTTP_GATEWAY_TIMEOUT
+        return isinstance(error.__cause__, requests.exceptions.ReadTimeout)
 
     @staticmethod
     def _extract_errors(response: requests.Response) -> list[Any]:
@@ -319,6 +493,8 @@ class Client:
                 return body['errors']
             if body.get('message'):
                 return [body['message']]
+            if body.get('error'):
+                return [body['error']]
         return [response.text or response.reason]
 
     def _has_oauth_credentials(self) -> bool:
@@ -339,29 +515,6 @@ class Client:
         """Build a query string from key-value pairs."""
         return '&'.join(f'{k}={v}' for k, v in params)
 
-    def _get_data_url(
-        self, 
-        class_name: str, 
-        page_size: int, 
-        lang: str, 
-        include_date_fields: bool,
-        next_page_token: str = '', 
-        page_no: int = -1
-    ) -> str:
-        params = [
-            ('filter', f'type:{class_name}'),
-            ('lang', lang),
-            ('pageSize', page_size),
-            ('t', self._cache_buster()),
-        ]
-        if len(next_page_token) > 0:
-            params.append(('nextPageToken', next_page_token))
-        elif page_no > 0:
-            params.append(('pageNo', page_no))
-        if include_date_fields:
-            params.append(('includeDateFields', 'true'))
-        return f'{self._base_url}_all?{self._build_query(params)}'
-
     def _cache_buster(self) -> str:
         """Return a cache-busting timestamp value."""
         return str(datetime.now(tz=UTC).timestamp())
@@ -370,46 +523,34 @@ class Client:
         """Check the API service status.
 
         :returns: The API status string, or ``'unknown'`` if unavailable.
+        :raises AuthenticationError: If authentication fails.
         """
         url = f'{self._service_url}status?t={self._cache_buster()}'
-        response = self._request(HTTP.GET, url, headers=self._get_headers())
-        return response.get('api', 'unknown')
+        try:
+            # A status check should answer promptly, so it is not retried.
+            response = self._read_json(HTTP.GET, url, retries=0)
+        except AuthenticationError:
+            raise
+        except DatagraphsError as e:
+            _logger.warning('API status unavailable: %s', e)
+            return 'unknown'
+        return response.get('api', 'unknown') if isinstance(response, dict) else 'unknown'
 
     def get(self, class_name: str, lang: str = 'all', include_date_fields: bool = False) -> list[dict[str, Any]]:
         """Retrieve all entities of a given type.
 
-        Automatically paginates through all results.
+        Pages through every result, and returns them only once all have been
+        read (see `query_all`).
 
         :param class_name: The entity class to fetch.
         :param lang: Language code for results (default ``'all'``).
         :param include_date_fields: Whether to include system date metadata.
-        :returns: A list of entity dicts.
+        :returns: A list of every entity of the class.
+        :raises HttpStatusError: If any page request fails.
+        :raises IncompleteReadError: If the pages do not add up to the reported total.
+        :raises DatagraphsError: If the read fails for any other reason.
         """
-        page_no = 1
-        resp = self._request(
-            HTTP.GET, 
-            self._get_data_url(class_name, page_no=page_no, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields), 
-            headers=self._get_headers(lang)
-        )
-        if 'search' in resp:
-            total_results = resp['search']['totalResults']
-            data = resp['results'] if total_results > 0 else []
-            while page_no * self._batch_size < total_results:
-                page_no += 1
-                if 'nextPageToken' in resp['search']:
-                    next_page_token = resp['search']['nextPageToken']
-                    url = self._get_data_url(class_name, next_page_token=next_page_token, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields)
-                else:
-                    url = self._get_data_url(class_name, page_no=page_no, page_size=self._batch_size, lang=lang, include_date_fields=include_date_fields)
-                resp = self._request(HTTP.GET, url, headers=self._get_headers(lang))
-                if 'results' in resp:
-                    data.extend(resp['results'])
-                time.sleep(self._wait_time_ms / 1000)
-            return data
-        elif 'errors' in resp:
-            return resp
-        else:
-            return []
+        return self.query_all(filters=f'type:{class_name}', lang=lang, include_date_fields=include_date_fields)
 
     def _get_query_url(self, 
             dataset: str = '_all', 
@@ -480,8 +621,13 @@ class Client:
             include_date_fields: bool = False
         ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Query the API with filters, facets, sorting, and pagination.
-        
-        :param gql: a GQL query string - if this is specified then all other arguments are ignored.
+
+        Returns a single page of results. Use `query_page` to also get the
+        total and the page tokens, or `query_all` to read every page.
+
+        :param gql: a GQL query string - if this is specified then all other
+            arguments except ``lang`` are ignored, and the rows the query
+            returns are returned as a list.
         :param dataset: Dataset slug to query (default ``'_all'``).
         :param q: Free-text search query string.
         :param filters: Filter expression (e.g. ``'type:Person'``).
@@ -499,59 +645,180 @@ class Client:
         :param next_page_token: Token for cursor-based forward pagination.
         :param include_date_fields: Whether to include system date metadata.
         :returns: A list of result dicts, or a ``(results, facets)`` tuple when
-            facets are requested.
+            the response carries facets.
+        :raises HttpStatusError: If the request fails.
+        :raises DatagraphsError: If the request fails for any other reason, or
+            the response is malformed.
         """
         if gql:
             return self._query_gql(gql, lang)
-        else:
-            return self._query(dataset, q, filters, facets, facet_size, date_facets, fields, embed, sort, ids, lang, page_no, page_size, previous_page_token, next_page_token, include_date_fields)
+        if ids:
+            url = self._get_query_url(
+                dataset, q, filters, facets, facet_size, date_facets, fields, embed, sort, ids, lang, page_no,
+                page_size if page_size > -1 else self._batch_size, previous_page_token, next_page_token, include_date_fields,
+            )
+            body = self._read_json(HTTP.GET, url, lang=lang)
+            # An ids lookup answers with a plain list of the entities found.
+            return body if isinstance(body, list) else self._parse_search_page(body, url).results
+        page = self.query_page(
+            dataset=dataset, q=q, filters=filters, facets=facets, facet_size=facet_size, date_facets=date_facets,
+            fields=fields, embed=embed, sort=sort, lang=lang, page_no=page_no, page_size=page_size,
+            previous_page_token=previous_page_token, next_page_token=next_page_token, include_date_fields=include_date_fields,
+        )
+        return (page.results, page.facets) if page.facets is not None else page.results
 
-    def _query(self, 
-            dataset: str = '_all', 
-            q: str = '', 
-            filters: str = '', 
-            facets: str = '', 
-            facet_size: int = -1, 
-            date_facets: str = '', 
-            fields: str = '', 
-            embed: str = '', 
-            sort: str = '', 
-            ids: str = '', 
-            lang: str = 'all', 
+    def query_page(self,
+            dataset: str = '_all',
+            q: str = '',
+            filters: str = '',
+            facets: str = '',
+            facet_size: int = -1,
+            date_facets: str = '',
+            fields: str = '',
+            embed: str = '',
+            sort: str = '',
+            lang: str = 'all',
             page_no: int = -1,
             page_size: int = -1,
             previous_page_token: str = '',
             next_page_token: str = '',
             include_date_fields: bool = False
-        ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        if page_size == -1:
-            page_size = self._batch_size
+        ) -> QueryPage:
+        """Fetch one page of search results, with the total and the tokens for paging on.
+
+        Takes the same arguments as `query`, except ``gql`` and ``ids``.
+        ``page_size`` defaults to the client's ``batch_size``.
+
+        :returns: The page.
+        :raises HttpStatusError: If the request fails.
+        :raises DatagraphsError: If the request fails for any other reason, or
+            the response is malformed.
+        """
         url = self._get_query_url(
-            dataset, q, filters, facets, facet_size, date_facets, fields, embed, sort, ids,
-            lang, page_no, page_size, previous_page_token, next_page_token, include_date_fields
+            dataset=dataset, q=q, filters=filters, facets=facets, facet_size=facet_size, date_facets=date_facets,
+            fields=fields, embed=embed, sort=sort, lang=lang, page_no=page_no,
+            page_size=page_size if page_size > -1 else self._batch_size,
+            previous_page_token=previous_page_token, next_page_token=next_page_token, include_date_fields=include_date_fields,
         )
-        resp = self._request(HTTP.GET, url, headers=self._get_headers(lang))
-        if resp and 'search' in resp:
-            total_results = resp['search']['totalResults']
-            results = resp['results'] if total_results > 0 else []
-            if 'facets' in resp:
-                return results, resp['facets']
-            else:
-                return results
-        elif len(ids) > 0 and isinstance(resp, list):
-            return resp
-        else:
-            return []
+        return self._read_search_page(url, lang)
+
+    def query_all(self,
+            dataset: str = '_all',
+            q: str = '',
+            filters: str = '',
+            fields: str = '',
+            embed: str = '',
+            sort: str = '',
+            lang: str = 'all',
+            page_size: int = -1,
+            include_date_fields: bool = False
+        ) -> list[dict[str, Any]]:
+        """Read every result of a search, paging to the end.
+
+        Results are returned only once all have been read, so a partial result
+        is never returned: every page must succeed, and the results must add
+        up to the ``totalResults`` the API reported, with no result repeated.
+        Pages are fetched by ``nextPageToken`` whenever the API provides one,
+        since page numbers cannot reach past the first 10,000 results.
+
+        :param dataset: Dataset slug to query (default ``'_all'``).
+        :param q: Free-text search query string.
+        :param filters: Filter expression (e.g. ``'type:Person'``).
+        :param fields: Comma-separated field names to include in results.
+        :param embed: Embedding depth for related entities.
+        :param sort: Sort expression (e.g. ``'label:asc'``).
+        :param lang: Language code for results (default ``'all'``).
+        :param page_size: Number of results per page request (default: the
+            client's ``batch_size``).
+        :param include_date_fields: Whether to include system date metadata.
+        :returns: Every result, in the order the API returned them.
+        :raises HttpStatusError: If any page request fails.
+        :raises IncompleteReadError: If the pages do not add up to the reported total.
+        :raises DatagraphsError: If the read fails for any other reason, or a
+            response is malformed.
+        """
+        page_size = page_size if page_size > -1 else self._batch_size
+        def page_url(next_page_token: str, page_no: int) -> str:
+            return self._get_query_url(
+                dataset=dataset, q=q, filters=filters, fields=fields, embed=embed, sort=sort, lang=lang,
+                page_no=-1 if next_page_token else page_no, page_size=page_size,
+                next_page_token=next_page_token, include_date_fields=include_date_fields,
+            )
+        return self._read_all_pages(page_url, lang)
+
+    def _read_all_pages(self, page_url: Callable[[str, int], str], lang: str = 'all') -> list[dict[str, Any]]:
+        """Read every page of a search, returning all results or raising.
+
+        :param page_url: Builds the URL of a page from a ``nextPageToken``
+            (``''`` when there is none) and a page number.
+        """
+        page = self._read_search_page(page_url('', 1), lang)
+        expected = page.total_results
+        # Token paging, once begun, must continue to the end: switching to page
+        # numbers part-way would not resume where the tokens left off.
+        token_paging = page.next_page_token is not None
+        results: list[dict[str, Any]] = []
+        seen_ids: set[Any] = set()
+        page_no, token = 1, ''
+        while True:
+            for result in page.results:
+                result_id = result.get('id') if isinstance(result, dict) else None
+                if result_id is not None:
+                    if result_id in seen_ids:
+                        raise IncompleteReadError(expected, len(results), f'Page {page_no} repeated {result_id}: the data may have changed while it was read')
+                    seen_ids.add(result_id)
+                results.append(result)
+            # The API gives a nextPageToken even on the last page, so the count,
+            # not the token, says when the read is done.
+            if len(results) >= expected or not page.results:
+                break
+            if token_paging:
+                if not page.next_page_token:
+                    break
+                if page.next_page_token == token:
+                    raise IncompleteReadError(expected, len(results), f'Page {page_no} returned the nextPageToken it was requested with')
+                token = page.next_page_token
+            page_no += 1
+            time.sleep(self._wait_time_ms / 1000)
+            page = self._read_search_page(page_url(token, page_no), lang)
+            # A changed total means results were added or removed during the
+            # read, so pages may have shifted to skip or repeat results - even
+            # ones without an id, which the repeat check cannot see.
+            if page.total_results != expected:
+                raise IncompleteReadError(expected, len(results), f'The total changed from {expected} to {page.total_results} at page {page_no}: the data changed while it was read')
+        if len(results) != expected:
+            raise IncompleteReadError(expected, len(results), f'Read {len(results)} results, but the API reported {expected}')
+        return results
+
+    def _read_search_page(self, url: str, lang: str = 'all') -> QueryPage:
+        """GET one page of search results."""
+        return self._parse_search_page(self._read_json(HTTP.GET, url, lang=lang), url)
+
+    @staticmethod
+    def _parse_search_page(body: Any, url: str) -> QueryPage:
+        """Parse a search response body, rejecting one that is not a search page."""
+        search = body.get('search') if isinstance(body, dict) else None
+        total = search.get('totalResults') if isinstance(search, dict) else None
+        if not isinstance(total, int) or isinstance(total, bool) or total < 0:
+            raise DatagraphsError(f'Malformed search response from {url}: no valid search.totalResults')
+        results = body.get('results', [] if total == 0 else None)
+        if not isinstance(results, list):
+            raise DatagraphsError(f'Malformed search response from {url}: no results list')
+        return QueryPage(
+            results=results,
+            total_results=total,
+            next_page_token=search.get('nextPageToken') or None,
+            previous_page_token=search.get('previousPageToken') or None,
+            facets=body.get('facets'),
+        )
 
     def _query_gql(self, gql:str, lang: str) -> list[dict[str, Any]]:
         url = f'{self._base_url}_cypher'
-        headers = self._get_headers(lang)
-        headers['Content-Type'] = 'application/json'
-        resp = self._request(HTTP.POST, url, json={'query': gql}, headers=headers)
-        if resp and 'data' in resp: 
-            return resp['data']
-        else:
-            return []
+        body = self._read_json(HTTP.POST, url, json={'query': gql}, lang=lang)
+        results = body.get('results') if isinstance(body, dict) else None
+        if not isinstance(results, list):
+            raise DatagraphsError(f'Malformed GQL response from {url}: no results list')
+        return results
 
     def put(self, dataset: str, data: dict[str, Any] | list[dict[str, Any]]) -> PutResult:
         """Load entities into a dataset.
@@ -571,6 +838,9 @@ class Client:
         :returns: The outcome for every submitted entity.
         :raises AuthenticationError: If authentication fails; no further
             batches are attempted.
+        :raises TokenRequestError: If an auth token cannot be obtained; no
+            further batches are attempted. The batch being sent when it was
+            raised was not written.
         """
         entities = [data] if isinstance(data, dict) else data
         length = len(entities)
@@ -598,20 +868,18 @@ class Client:
     def _put_batch(self, url: str, batch: list[dict[str, Any]]) -> tuple[_BatchOutcome, Exception | None]:
         """PUT one batch and classify the outcome, returning it with the error (if any)."""
         try:
-            self._request(HTTP.PUT, url, strict=True, json=batch, headers=self._get_headers())
-        except AuthenticationError:
+            self._send(HTTP.PUT, url, json=batch)
+        except (AuthenticationError, TokenRequestError):
+            # Nothing can be written without a token, so stop rather than
+            # report every remaining entity as failed.
             raise
-        except HttpStatusError as e:
-            if e.status_code == self._HTTP_GATEWAY_TIMEOUT:
-                return _BatchOutcome.TIMED_OUT, e
-            if e.status_code in self._HTTP_CLIENT_ERRORS and e.status_code not in self._NON_PAYLOAD_CLIENT_ERRORS:
-                return _BatchOutcome.REJECTED, e
-            return _BatchOutcome.FAILED, e
         except DatagraphsError as e:
-            # A read timeout means the request was sent but no response arrived,
-            # so, as with a 504, the write may have completed.
-            if isinstance(e.__cause__, requests.exceptions.ReadTimeout):
+            if self._is_timeout(e):
                 return _BatchOutcome.TIMED_OUT, e
+            if isinstance(e, HttpStatusError):
+                if e.status_code in self._HTTP_CLIENT_ERRORS and e.status_code not in self._NON_PAYLOAD_CLIENT_ERRORS:
+                    return _BatchOutcome.REJECTED, e
+                return _BatchOutcome.FAILED, e
             # requests reports an out-of-range float (e.g. NaN) in the payload this way.
             if isinstance(e.__cause__, requests.exceptions.InvalidJSONError):
                 return _BatchOutcome.REJECTED, e
@@ -649,21 +917,35 @@ class Client:
 
         :param class_name: The entity class.
         :param entity_id: The entity identifier.
+        :raises HttpStatusError: If the API does not confirm the delete.
         """
         url = f'{self._base_url}{class_name}/{entity_id}'
-        resp = self._request(HTTP.DELETE, url, headers=self._get_headers())
-        if resp and 'errors' in resp:
-            return resp
+        self._send(HTTP.DELETE, url)
 
     def apply_schema(self, schema: DatagraphsSchema, mode: SCHEMA_APPLY_MODE = SCHEMA_APPLY_MODE.APPLY) -> None | list[dict[str, Any]]:
         """Apply a schema to the project, replacing the currently active domain model.
 
         :param schema: The schema to apply.
+        :param mode: ``APPLY`` to apply it, ``VALIDATE_ONLY`` to report what
+            would block it without applying it, or ``FORCE`` to clear and drop
+            whatever blocks it and then apply it.
+        :returns: For ``VALIDATE_ONLY``, the blocking dependencies the API
+            reported (empty if none); otherwise ``None``.
+        :raises DatagraphsError: If the API rejects the schema (and, for
+            ``FORCE``, its dependencies cannot be resolved).
+        :raises HttpStatusError: If the request fails for any reason other
+            than the schema being rejected, e.g. a 504.
         """
         _logger.info('Applying schema to project: %s', self.project_name)
         url = f'{self._base_url}models/_active'+('?dryRun=true' if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY else '')
-        resp = self._request(HTTP.PUT, url, data=schema.to_json(), headers=self._get_headers())
-        errors = resp.get("errors", [])
+        try:
+            self._send(HTTP.PUT, url, data=schema.to_json())
+            errors = []
+        except HttpStatusError as e:
+            # The API rejects a schema with a 400 whose errors name what blocks it.
+            if e.status_code != self._HTTP_BAD_REQUEST:
+                raise
+            errors = e.errors
 
         if all(isinstance(e, dict) for e in errors):
             if mode == SCHEMA_APPLY_MODE.VALIDATE_ONLY:
@@ -737,20 +1019,23 @@ class Client:
         :returns: The current project `Schema`.
         """
         url = f'{self._base_url}models/_active?t={self._cache_buster()}'
-        response = self._request(HTTP.GET, url, headers=self._get_headers())        
+        response = self._read_json(HTTP.GET, url)
+        if not isinstance(response, dict):
+            raise DatagraphsError(f'Malformed schema response from {url}')
         return DatagraphsSchema.create_from(response)
         
     def get_datasets(self) -> list[Dataset]:
         """Retrieve all datasets in the project.
 
-        :returns: A list of `Dataset` objects.
+        :returns: A `Dataset` for every dataset in the project.
+        :raises HttpStatusError: If any page request fails.
+        :raises IncompleteReadError: If the pages do not add up to the reported total.
         """
-        url = f'{self._base_url}?pageSize={self._DEFAULT_DATASETS_PAGE_SIZE}&t={self._cache_buster()}'
-        resp = self._request(HTTP.GET, url, headers=self._get_headers())
-        data = resp.get("results", []) if resp else []
-        if len(data) >= self._DEFAULT_DATASETS_PAGE_SIZE:
-            _logger.warning('Dataset results (%d) may have been truncated at page size limit (%d)', len(data), self._DEFAULT_DATASETS_PAGE_SIZE)
-        return [Dataset.create_from(item) for item in data]
+        def page_url(next_page_token: str, page_no: int) -> str:
+            params = [('pageSize', self._DEFAULT_DATASETS_PAGE_SIZE), ('t', self._cache_buster())]
+            params.append(('nextPageToken', next_page_token) if next_page_token else ('pageNo', page_no))
+            return f'{self._base_url}?{self._build_query(params)}'
+        return [Dataset.create_from(item) for item in self._read_all_pages(page_url)]
 
     def get_dataset(self, dataset_slug: str) -> Dataset | None:
         """Retrieve a specific dataset by slug.
@@ -776,10 +1061,17 @@ class Client:
         target_datasets = self.get_datasets()
         for dataset in datasets:
             match = next((d for d in target_datasets if d.slug == dataset.slug), None)
-            if match is None:
-                self.create_dataset(dataset)
-            elif match != dataset:
-                self.update_dataset(dataset)
+            try:
+                if match is None:
+                    self.create_dataset(dataset)
+                elif match != dataset:
+                    self.update_dataset(dataset)
+            except DatagraphsError as e:
+                # The write may still complete server-side, and the poll below
+                # is what confirms it, so a timeout here is not yet a failure.
+                if not self._is_timeout(e):
+                    raise
+                _logger.warning('Request to apply dataset %s timed out - confirming whether it was applied: %s', dataset.slug, e)
             time.sleep(self._wait_time_ms / 1000)
         self._assert_datasets_applied(datasets, timeout_s)
 
@@ -838,7 +1130,7 @@ class Client:
         :param dataset: The dataset to create.
         """
         url = f'{self._base_url}datasets'
-        self._request(HTTP.POST, url, json=dataset.to_dict(), headers=self._get_headers())
+        self._send(HTTP.POST, url, json=dataset.to_dict())
 
     def update_dataset(self, dataset: Dataset) -> None:
         """Update an existing dataset.
@@ -846,7 +1138,7 @@ class Client:
         :param dataset: The dataset to update (matched by slug).
         """
         url = f'{self._base_url}datasets/{dataset.slug}'
-        self._request(HTTP.PUT, url, json=dataset.to_dict(), headers=self._get_headers())
+        self._send(HTTP.PUT, url, json=dataset.to_dict())
 
     def clear_dataset(self, dataset_slug: str) -> None:
         """Delete all data from a dataset, keeping the dataset itself intact.
@@ -864,7 +1156,7 @@ class Client:
         _logger.info('Clearing down data of type %s from dataset: %s', class_name, dataset_slug)
         filter = class_name if class_name == self._ALL_TYPES_FILTER else f'type:{class_name}'
         url = f'{self._base_url}{dataset_slug}?filter={filter}'
-        self._request(HTTP.DELETE, url, headers=self._get_headers())
+        self._send(HTTP.DELETE, url)
 
     def drop_dataset(self, dataset_slug: str) -> None:
         """Drop a dataset and all its data entirely.
@@ -873,7 +1165,7 @@ class Client:
         """
         _logger.info('Dropping dataset: %s', dataset_slug)
         url = f'{self._base_url}datasets/{dataset_slug}'
-        self._request(HTTP.DELETE, url, headers=self._get_headers())
+        self._send(HTTP.DELETE, url)
 
     def drop_class_from_dataset(self, dataset_slug: str, class_name: str) -> None:
         """Remove the specified class from a dataset, deleting all data of that class.

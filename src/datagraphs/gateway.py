@@ -2,12 +2,14 @@
 
 import json
 import logging
+import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from datagraphs.client import AuthenticationError, FailedWrite, PutResult, TimedOutWrite
+from datagraphs.client import AuthenticationError, FailedWrite, PutResult, TimedOutWrite, TokenRequestError
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import SCHEMA_APPLY_MODE, VALIDATION_MODE
@@ -15,6 +17,11 @@ from datagraphs.schema import Schema
 from datagraphs.utils import rewrite_urns_for_project
 
 _logger = logging.getLogger(__name__)
+
+# The process umask, read once at import (reading it means briefly setting it),
+# so that dumped files get the permissions a plain open() would give them.
+_UMASK = os.umask(0)
+os.umask(_UMASK)
 
 class SkipReason(Enum):
     """Why `Gateway.load_data` did not load a class."""
@@ -79,6 +86,26 @@ class LoadResult:
         nothing to load.
         """
         return not self.failed and not self.timed_out and not self.class_errors
+
+@dataclass
+class DumpResult:
+    """The outcome of `Gateway.dump_data`.
+
+    :ivar exported: The number of entities written to files.
+    :ivar files: Per class, the file its entities were written to.
+    :ivar failed: Per class, the exception that stopped it being exported.
+        No file is written for a failed class, so a file from an earlier
+        export is left as it was.
+    """
+
+    exported: int = 0
+    files: dict[str, Path] = field(default_factory=dict)
+    failed: dict[str, Exception] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        """True when every class requested was exported in full."""
+        return not self.failed
 
 class Gateway:
     """Higher-level wrapper for deploying projects and bulk import/export of data."""
@@ -219,6 +246,8 @@ class Gateway:
         :returns: The outcome of the load, per class.
         :raises AuthenticationError: If authentication fails; no further
             classes are attempted.
+        :raises TokenRequestError: If an auth token cannot be obtained; no
+            further classes are attempted.
         """
         from_dir_path = Path(from_dir_path) if from_dir_path else Path()
         result = LoadResult()
@@ -248,7 +277,7 @@ class Gateway:
         """Load data for a specific class from a JSON file, accounting for it in *result*."""
         try:
             outcome = self._load_from_file(class_name, dataset_slug, from_dir_path, file_path)
-        except AuthenticationError:
+        except (AuthenticationError, TokenRequestError):
             raise
         except Exception as e:  # noqa: BLE001 - intentional: log the failing class, record the error, keep loading others
             _logger.error('Error loading data for %s: %s', class_name, str(e))
@@ -329,11 +358,15 @@ class Gateway:
             entities.append(rewrite_urns_for_project(entity, self._client.project_name))
         return entities
 
-    def dump_data(self, to_dir_path: str | Path, class_name: str = Schema.ALL_CLASSES, excluded_class_names: str = "", include_date_fields: bool = False) -> dict:
+    def dump_data(self, to_dir_path: str | Path, class_name: str = Schema.ALL_CLASSES, excluded_class_names: str = "", include_date_fields: bool = False) -> DumpResult:
         """Export entity data from the project to JSON files on disk.
 
-        Each class is written to a separate ``<ClassName>.json`` file. Base
-        classes are automatically skipped.
+        Each class is written to a separate ``<ClassName>.json`` file, and
+        only once every entity of the class has been read, so a file never
+        holds a partial export. A class that cannot be read is reported in
+        `DumpResult.failed` and the remaining classes are still exported:
+        check `DumpResult.ok` on the result. Base classes are automatically
+        skipped.
 
         :param to_dir_path: Target directory. Created automatically if it does
             not exist.
@@ -341,11 +374,15 @@ class Gateway:
             for all.
         :param excluded_class_names: Comma-separated list of classes to exclude from the export if class_name is ``Schema.ALL_CLASSES``.
         :param include_date_fields: Whether to include system date metadata.
-        :returns: A dict with an ``exported`` count.
+        :returns: The outcome of the export, per class.
+        :raises AuthenticationError: If authentication fails; no further
+            classes are attempted.
+        :raises TokenRequestError: If an auth token cannot be obtained; no
+            further classes are attempted.
         """
         to_dir_path = Path(to_dir_path)
         to_dir_path.mkdir(parents=True, exist_ok=True)
-        stats = {"exported": 0}
+        result = DumpResult()
 
         if class_name == Schema.ALL_CLASSES:
             datasets = self._client.get_datasets()
@@ -355,33 +392,54 @@ class Gateway:
                 if dataset_class in excluded_classes:
                     continue
                 if len(self._get_schema().find_subclasses(dataset_class)) == 0:   
-                    try:
-                        result = self._persist_to_file(dataset_class, to_dir_path, include_date_fields)
-                        stats["exported"] += result
-                        time.sleep(self._wait_time_ms / 1000)
-                    except Exception as e:  # noqa: BLE001 - intentional: log the failing class and continue exporting the rest
-                        _logger.error('Error exporting data for %s: %s', dataset_class, str(e))
+                    self._dump_class(result, dataset_class, to_dir_path, include_date_fields)
+                    time.sleep(self._wait_time_ms / 1000)
         else:
-            try:
-                result = self._persist_to_file(class_name, to_dir_path, include_date_fields)
-                stats["exported"] += result
-            except Exception as e:  # noqa: BLE001 - intentional: log the failing class and return partial export stats
-                _logger.error('Error exporting data for %s: %s', class_name, str(e))
-        return stats
+            self._dump_class(result, class_name, to_dir_path, include_date_fields)
+        if result.ok:
+            _logger.info('Exported %d entities from %d classes', result.exported, len(result.files))
+        else:
+            _logger.error('Data export incomplete: %d entities exported, %d classes failed: %s',
+                          result.exported, len(result.failed), sorted(result.failed))
+        return result
 
-    def _persist_to_file(self, class_name: str, to_dir_path: str | Path, include_date_fields: bool) -> int:
+    def _dump_class(self, result: DumpResult, class_name: str, to_dir_path: Path, include_date_fields: bool) -> None:
+        """Export one class to its file, accounting for it in *result*."""
+        try:
+            file_path, count = self._persist_to_file(class_name, to_dir_path, include_date_fields)
+        except (AuthenticationError, TokenRequestError):
+            raise
+        except Exception as e:  # noqa: BLE001 - intentional: record the failing class and keep exporting the rest
+            _logger.error('Error exporting data for %s: %s', class_name, str(e))
+            result.failed[class_name] = e
+            return
+        result.files[class_name] = file_path
+        result.exported += count
+
+    def _persist_to_file(self, class_name: str, to_dir_path: Path, include_date_fields: bool) -> tuple[Path, int]:
         """Fetch entities of *class_name* from the API and write them to a JSON file.
 
-        Args:
-            class_name: The class name to fetch.
-            to_dir_path: Target directory (must already exist).
+        The file is written to a temporary name and then renamed into place, so
+        it is either complete or left as it was. It keeps the permissions of the
+        file it replaces, or, for a new file, gets those the umask allows.
+
+        :returns: The file written, and the number of entities in it.
         """
         _logger.info('Fetching data for %s...', class_name)
         data = self._client.get(class_name=class_name, include_date_fields=include_date_fields)
-        file_path = Path(to_dir_path).joinpath(f'{class_name}.json')
-        with open(file_path, 'w', encoding='utf-8') as dataFile:
-            json.dump(data, dataFile, indent=2)
-        return len(data)
+        file_path = to_dir_path.joinpath(f'{class_name}.json')
+        mode = file_path.stat().st_mode & 0o7777 if file_path.exists() else 0o666 & ~_UMASK
+        fd, tmp_path = tempfile.mkstemp(dir=to_dir_path, prefix=f'.{class_name}.', suffix='.json.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as data_file:
+                json.dump(data, data_file, indent=2)
+            # mkstemp creates the file owner-only.
+            os.chmod(tmp_path, mode)
+            os.replace(tmp_path, file_path)
+        except BaseException:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+        return file_path, len(data)
 
     def clear_down(self) -> None:
         """Clear all data from all datasets in the project.
