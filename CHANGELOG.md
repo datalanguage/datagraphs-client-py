@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-27
+
 ### Fixed
 - **Reads quietly returned incomplete data.** Except for `put`, a failed request was treated as a success: a 504 was logged and read as an empty response, and a 400 returned its error body as the result. Every request now raises on failure, so an empty result always means there was nothing to read.
   - `Client.get` returned `[]` when its first page failed, and returned the error dict on a 400. When a later page failed it either dropped that page without a word or raised `KeyError`, losing everything read so far.
