@@ -12,7 +12,7 @@ from pathlib import Path
 from datagraphs.client import AuthenticationError, FailedWrite, PutResult, TimedOutWrite, TokenRequestError
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
-from datagraphs.enums import SCHEMA_APPLY_MODE, VALIDATION_MODE
+from datagraphs.enums import ISOLATION_MODE, SCHEMA_APPLY_MODE, VALIDATION_MODE
 from datagraphs.schema import Schema
 from datagraphs.utils import rewrite_urns_for_project
 
@@ -231,6 +231,7 @@ class Gateway:
         class_name: str = Schema.ALL_CLASSES,
         from_dir_path: str | Path = "",
         file_path: str | Path = "",
+        isolation: ISOLATION_MODE = ISOLATION_MODE.BISECT,
     ) -> LoadResult:
         """Load data from JSON files into the DataGraphs project.
 
@@ -243,6 +244,8 @@ class Gateway:
         :param from_dir_path: Directory containing ``<ClassName>.json`` files.
         :param file_path: Explicit path to a single JSON file (used when loading
             a specific *class_name*).
+        :param isolation: How to find the rejected entities of a batch the API
+            rejects (see `Client.put`).
         :returns: The outcome of the load, per class.
         :raises AuthenticationError: If authentication fails; no further
             classes are attempted.
@@ -254,29 +257,29 @@ class Gateway:
         datasets = self._client.get_datasets()
         if class_name == Schema.ALL_CLASSES:
             for dataset in datasets:
-                self._load_data_for_dataset(result, dataset, from_dir_path)
+                self._load_data_for_dataset(result, dataset, from_dir_path, isolation)
         else:
             dataset = next((d for d in datasets if class_name in d.classes), None)
             if dataset is not None:
-                self._load_data_for_class(result, class_name, dataset.slug, from_dir_path, file_path)
+                self._load_data_for_class(result, class_name, dataset.slug, isolation, from_dir_path, file_path)
             else:
                 _logger.error('The class %s was not found in any dataset - cannot load data.', class_name)
                 result.skipped[class_name] = SkippedClass(SkipReason.NOT_IN_DATASET)
         self._log_load_result(result)
         return result
 
-    def _load_data_for_dataset(self, result: LoadResult, dataset: Dataset, from_dir_path: str | Path) -> None:
+    def _load_data_for_dataset(self, result: LoadResult, dataset: Dataset, from_dir_path: str | Path, isolation: ISOLATION_MODE) -> None:
         """Load data for all non-base classes in a dataset."""
         for dataset_class in dataset.classes:
             if len(self._get_schema().find_subclasses(dataset_class)) == 0:
-                self._load_data_for_class(result, dataset_class, dataset.slug, from_dir_path)
+                self._load_data_for_class(result, dataset_class, dataset.slug, isolation, from_dir_path)
             else:
                 _logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
 
-    def _load_data_for_class(self, result: LoadResult, class_name: str, dataset_slug: str, from_dir_path: str | Path = "", file_path: str | Path = "") -> None:
+    def _load_data_for_class(self, result: LoadResult, class_name: str, dataset_slug: str, isolation: ISOLATION_MODE, from_dir_path: str | Path = "", file_path: str | Path = "") -> None:
         """Load data for a specific class from a JSON file, accounting for it in *result*."""
         try:
-            outcome = self._load_from_file(class_name, dataset_slug, from_dir_path, file_path)
+            outcome = self._load_from_file(class_name, dataset_slug, isolation, from_dir_path, file_path)
         except (AuthenticationError, TokenRequestError):
             raise
         except Exception as e:  # noqa: BLE001 - intentional: log the failing class, record the error, keep loading others
@@ -297,6 +300,7 @@ class Gateway:
         self,
         class_name: str,
         dataset_slug: str,
+        isolation: ISOLATION_MODE,
         from_dir_path: str | Path = "",
         file_path: str | Path = "",
     ) -> PutResult | SkippedClass:
@@ -318,7 +322,7 @@ class Gateway:
             return SkippedClass(SkipReason.EMPTY_FILE, json_file_path)
         data = self._map_data_project_urns(data)
         _logger.info('Writing data for %s...', class_name)
-        return self._client.put(dataset_slug, data)
+        return self._client.put(dataset_slug, data, isolation=isolation)
 
     @staticmethod
     def _log_load_result(result: LoadResult) -> None:

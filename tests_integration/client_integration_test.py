@@ -1,5 +1,6 @@
 import pytest
 from datagraphs.client import HttpStatusError
+from datagraphs.enums import ISOLATION_MODE
 from lib import get_client, get_data, get_datasets, get_empty_schema, get_schema
 
 
@@ -185,3 +186,29 @@ class TestDataOperations:
         with pytest.raises(HttpStatusError) as exc_info:
             self.client.query_all(filters='type:Cat', page_size=1_000_000)
         assert exc_info.value.status_code == 400
+
+
+class TestRejectedBatchIsolation:
+
+    @pytest.fixture(scope="function", autouse=True)
+    def setup(self):
+        self.client = get_client('integration-testing', batch_size=16)
+        self.client.tear_down(drop_datasets=False)
+        self.client.apply_schema(get_schema())
+        self.client.apply_datasets(get_datasets())
+
+    def cats(self, invalid: set[int]) -> list[dict]:
+        return [{'id': f'urn:pydg:Cat:iso{i}', 'type': 'Cat', 'name': f'cat{i}', 'naps': 'lots' if i in invalid else i}
+                for i in range(16)]
+
+    @pytest.mark.parametrize('isolation', [ISOLATION_MODE.BISECT, ISOLATION_MODE.INDIVIDUAL])
+    def test_should_write_every_valid_entity_and_report_each_invalid_one(self, isolation) -> None:
+        result = self.client.put('pets', self.cats({3, 11}), isolation=isolation)
+        assert result.loaded == 14
+        assert [f.index for f in result.failed] == [3, 11]
+        for failure in result.failed:
+            assert failure.status_code == 400
+            assert failure.errors == ['Row 1: "naps" must be a number']
+        assert sorted(c['id'] for c in self.client.get(class_name='Cat')) == sorted(
+            f'urn:pydg:Cat:iso{i}' for i in range(16) if i not in {3, 11})
+

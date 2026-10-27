@@ -1,7 +1,9 @@
 """DataGraphs API client for interacting with the DataGraphs service."""
 
+import functools
 import json
 import logging
+import math
 import random
 import time
 import urllib.parse
@@ -14,7 +16,7 @@ from typing import Any
 import requests
 
 from datagraphs.dataset import Dataset
-from datagraphs.enums import HTTP, SCHEMA_APPLY_MODE
+from datagraphs.enums import HTTP, ISOLATION_MODE, SCHEMA_APPLY_MODE
 from datagraphs.schema import Schema as DatagraphsSchema
 
 _logger = logging.getLogger(__name__)
@@ -166,6 +168,45 @@ class _BatchOutcome(Enum):
     REJECTED = auto()   # the request payload was refused: worth resubmitting entity by entity
     FAILED = auto()     # a server or transport failure unrelated to the payload
     TIMED_OUT = auto()
+
+@dataclass
+class _RejectionTally:
+    """The rejected batches isolated so far in one `Client.put`, to gauge how dense rejections are.
+
+    :ivar entities: The entities in the rejected batches that were isolated.
+    :ivar rejected: Of those, the entities rejected on their own.
+    """
+
+    entities: int = 0
+    rejected: int = 0
+
+@dataclass
+class _IsolationBudget:
+    """The requests left to isolate the rejected entities of one rejected batch.
+
+    Splitting is allowed only while the isolation could still finish one
+    entity at a time within *limit*, so ``spent + unresolved <= limit`` holds
+    throughout, and the isolation never makes more than *limit* requests.
+
+    :ivar limit: The most requests the isolation may make.
+    :ivar spent: The requests made so far.
+    :ivar unresolved: The entities in rejected groups not yet isolated, which
+        would cost one request each to finish one at a time.
+    :ivar rejected: The entities found to be rejected on their own.
+    """
+
+    limit: int
+    spent: int = 0
+    unresolved: int = 0
+    rejected: int = 0
+
+    def can_split(self) -> bool:
+        """Whether splitting an unresolved group (two requests) keeps room to finish one at a time.
+
+        If both halves are rejected, nothing is resolved, so the cost of
+        finishing one at a time then exceeds the cost now by two requests.
+        """
+        return self.spent + 2 + self.unresolved <= self.limit
 
 # Typographic and invisible characters that routinely contaminate credentials
 # and configuration when values are copied from rich-text sources (email, Word,
@@ -820,21 +861,33 @@ class Client:
             raise DatagraphsError(f'Malformed GQL response from {url}: no results list')
         return results
 
-    def put(self, dataset: str, data: dict[str, Any] | list[dict[str, Any]]) -> PutResult:
+    def put(self, dataset: str, data: dict[str, Any] | list[dict[str, Any]], isolation: ISOLATION_MODE = ISOLATION_MODE.BISECT) -> PutResult:
         """Load entities into a dataset.
 
         Entities are sent in batches of the configured ``batch_size``, and every
         batch is attempted regardless of the outcome of earlier ones. A batch
         whose payload is rejected (a 4xx response other than 404, 405, 408 or
-        429, or a value that cannot be JSON-encoded) is resubmitted one entity
-        at a time, so that only the offending entities fail. A batch that fails
-        for reasons unrelated to its payload (those 4xx statuses, a 5xx response
-        or a transport error) is not resubmitted, and all of its entities are
-        reported as failed. A batch that times out (504 or a read timeout) is
-        reported as timed out, since its write may still have completed.
+        429, or a value that cannot be JSON-encoded) is resubmitted as
+        *isolation* directs, so that only the offending entities fail. A batch
+        that fails for reasons unrelated to its payload (those 4xx statuses, a
+        5xx response or a transport error) is not resubmitted, and all of its
+        entities are reported as failed. A batch that times out (504 or a read
+        timeout) is reported as timed out, since its write may still have
+        completed. All of this applies equally to each part of a batch that is
+        resubmitted.
+
+        DataGraphs writes no part of a batch it rejects, so resubmitting parts
+        of one cannot write an entity twice, even one without an ``id``. An
+        entity is reported as rejected only once it has been rejected on its
+        own, so each rejection carries that entity's own status and errors.
 
         :param dataset: Target dataset slug.
         :param data: A single entity dict or a list of entity dicts.
+        :param isolation: How to find the rejected entities of a rejected
+            batch. ``BISECT`` (the default) splits it in halves until they are
+            isolated, switching to one entity at a time when most are
+            rejected; ``INDIVIDUAL`` resubmits each entity on its own; ``NONE``
+            reports the whole batch as failed without resubmitting it.
         :returns: The outcome for every submitted entity.
         :raises AuthenticationError: If authentication fails; no further
             batches are attempted.
@@ -846,24 +899,80 @@ class Client:
         length = len(entities)
         url = f'{self._base_url}{dataset}'
         result = PutResult()
+        tally = _RejectionTally()
         _logger.info('Loading %d entities into dataset %s in repo: %s', length, dataset, self.project_name)
         for i in range(0, length, self._batch_size):
             batch = entities[i:i + self._batch_size]
             if length > self._batch_size:
                 _logger.info('   Loading batch %d-%d of %d entities into dataset %s in repo: %s', i, i + len(batch), length, dataset, self.project_name)
             outcome, error = self._put_batch(url, batch)
-            if outcome is _BatchOutcome.REJECTED and len(batch) > 1:
-                _logger.warning('Batch %d-%d of %d entities rejected by dataset %s (%s) - resubmitting entities individually', i, i + len(batch), length, dataset, error)
-                # DataGraphs persists no part of a batch it rejects with a 4xx, so
-                # resubmitting each entity cannot duplicate one, even one without an id.
-                for index, entity in enumerate(batch, start=i):
-                    self._record_outcome(result, [entity], index, *self._put_batch(url, [entity]))
+            if outcome is _BatchOutcome.REJECTED and len(batch) > 1 and isolation is not ISOLATION_MODE.NONE:
+                budget = _IsolationBudget(limit=len(batch) + self._isolation_slack(isolation, len(batch), tally), unresolved=len(batch))
+                _logger.warning('Batch %d-%d of %d entities rejected by dataset %s (%s) - resubmitting to isolate the rejected entities (at most %d requests)',
+                                i, i + len(batch), length, dataset, error, budget.limit)
+                self._isolate(url, batch, i, result, budget)
+                tally.entities += len(batch)
+                tally.rejected += budget.rejected
             else:
                 self._record_outcome(result, batch, i, outcome, error)
         if not result.ok:
             _logger.error('Loaded %d of %d entities into dataset %s: %d failed, %d timed out',
                           result.loaded, length, dataset, len(result.failed), len(result.timed_out))
         return result
+
+    def _isolation_slack(self, isolation: ISOLATION_MODE, size: int, tally: _RejectionTally) -> int:
+        """The requests beyond one per entity that isolating a rejected batch of *size* may spend.
+
+        Resubmitting one entity at a time costs *size* requests. Bisecting costs
+        about 2·log₂(size) per rejected entity: far less when few are rejected,
+        but up to twice as much when all are. Bisection is therefore allowed
+        the cost of isolating one entity beyond *size*, and none at all when
+        the rejections so far suggest it would cost more than *size*.
+        """
+        if isolation is ISOLATION_MODE.INDIVIDUAL:
+            return 0
+        expected = max(1, round(size * tally.rejected / tally.entities)) if tally.entities else 1
+        if self._bisection_cost(size, expected) >= size:
+            return 0
+        return 2 * math.ceil(math.log2(size))
+
+    @staticmethod
+    @functools.cache
+    def _bisection_cost(size: int, rejected: int) -> int:
+        """The requests bisection makes to isolate *rejected* entities spread evenly through a rejected batch of *size*."""
+        if size <= 1 or rejected == 0:
+            return 0
+        left_size = (size + 1) // 2
+        left = min(left_size, (rejected + 1) // 2)
+        right = min(size - left_size, rejected - left)
+        left = rejected - right
+        return 2 + Client._bisection_cost(left_size, left) + Client._bisection_cost(size - left_size, right)
+
+    def _isolate(self, url: str, group: list[dict[str, Any]], start: int, result: PutResult, budget: _IsolationBudget) -> None:
+        """Find the rejected entities of a rejected *group*, accounting for every entity in *result*.
+
+        The group is split in halves while *budget* allows, and otherwise
+        resubmitted one entity at a time. *start* is the position of its first
+        entity in the data passed to `put`.
+        """
+        split = budget.can_split()
+        budget.unresolved -= len(group)
+        parts = [group[:(len(group) + 1) // 2], group[(len(group) + 1) // 2:]] if split else [[entity] for entity in group]
+        rejected = []
+        offset = start
+        for part in parts:
+            budget.spent += 1
+            outcome, error = self._put_batch(url, part)
+            if outcome is _BatchOutcome.REJECTED and len(part) > 1:
+                budget.unresolved += len(part)
+                rejected.append((part, offset))
+            else:
+                if outcome is _BatchOutcome.REJECTED:
+                    budget.rejected += 1
+                self._record_outcome(result, part, offset, outcome, error)
+            offset += len(part)
+        for part, part_start in rejected:
+            self._isolate(url, part, part_start, result, budget)
 
     def _put_batch(self, url: str, batch: list[dict[str, Any]]) -> tuple[_BatchOutcome, Exception | None]:
         """PUT one batch and classify the outcome, returning it with the error (if any)."""
