@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "pydatagraphs"
-version = "0.11.0"
+version = "0.12.0"
 description = "Datagraphs python client"
 readme = "README.md"
 license = { file = "LICENSE" }
