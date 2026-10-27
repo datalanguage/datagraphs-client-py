@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Query values were not URL-encoded**, except `q`. A filter (or any other parameter) holding `&`, `=`, `#`, `+`, `%` or a space could cut the query string short or change its meaning, so a query quietly returned the wrong results. For example, `nickname:"Tom & Jerry"` was sent as `nickname:"Tom ` plus a stray parameter, and the `+` in `C++` arrived as a space. A `nextPageToken` holding `+` could likewise arrive changed. Every query value is now encoded, including the class filter of `clear_class_from_dataset`. `:` and `,` are left as they are, since they are legal in a query string.
+
 ### Added
 - `Client.put` and `Gateway.load_data` take `isolation`, an `ISOLATION_MODE` that sets how the rejected entities of a rejected batch are found. DataGraphs rejects a whole batch for any invalid entity and does not reliably say which ones: its error names at most the first. It also writes nothing from a rejected batch, so any part of one can be resubmitted safely.
   - `BISECT` (the default) resubmits the batch in halves, and splits each rejected half again until the rejected entities are isolated. A rejected entity costs about 2·log₂(batch size) requests, so one invalid entity in a batch of 100 takes about 14 requests instead of 100.

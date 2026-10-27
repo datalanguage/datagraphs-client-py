@@ -212,3 +212,23 @@ class TestRejectedBatchIsolation:
         assert sorted(c['id'] for c in self.client.get(class_name='Cat')) == sorted(
             f'urn:pydg:Cat:iso{i}' for i in range(16) if i not in {3, 11})
 
+
+class TestQueryEncoding:
+
+    @pytest.fixture(scope="class", autouse=True)
+    def setup(self, request):
+        client = get_client('integration-testing')
+        client.tear_down(drop_datasets=False)
+        client.apply_schema(get_schema())
+        client.apply_datasets(get_datasets())
+        client.put('pets', [
+            {'id': 'urn:pydg:Dog:tj', 'type': 'Dog', 'name': 'Tom', 'nickname': 'Tom & Jerry', 'walks': 1},
+            {'id': 'urn:pydg:Dog:tom', 'type': 'Dog', 'name': 'Tommy', 'nickname': 'Tom', 'walks': 1},
+            {'id': 'urn:pydg:Dog:plus', 'type': 'Dog', 'name': 'Plus', 'nickname': 'C++', 'walks': 1},
+        ])
+        request.cls.client = client
+
+    @pytest.mark.parametrize('nickname', ['Tom & Jerry', 'C++', 'Tom'])
+    def test_should_filter_by_values_holding_url_syntax(self, nickname) -> None:
+        results = self.client.query_all(filters=f'nickname:"{nickname}"')
+        assert [r['nickname'] for r in results] == [nickname]

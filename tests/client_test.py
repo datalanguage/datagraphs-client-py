@@ -1849,3 +1849,82 @@ class TestRejectedBatchIsolation:
         assert all(len(ids) == self.BATCH_SIZE or 'entity-0' in ids for ids in self.sent())
 
 
+
+# Query Encoding Tests
+#
+# Each value must reach the API exactly as given: decoding the query string the
+# way a server does must give back every parameter unchanged, with no value
+# split or merged by an unencoded '&', '=' or '#'.
+AWKWARD_VALUES = {
+    'ampersand': 'nickname:Tom & Jerry',
+    'equals and hash': 'code:a=b#c',
+    'plus and percent': 'range:now+1d %20',
+    'quotes and brackets': 'name:"O\'Brien" AND (type:Cat OR type:Dog)',
+    'slash and question mark': 'path:/a/b?c',
+    'non-ascii': 'name:Müller – 東京',
+    'plain filter': 'type:Cat,Dog',
+}
+
+class TestQueryEncoding:
+
+    @pytest.fixture(scope="function", autouse=True)
+    def setup(self, get_client):
+        self.client = get_client(batch_size=2, max_read_retries=0)
+
+    def sent_params(self, n: int = 0) -> dict[str, list[str]]:
+        query = urllib.parse.urlsplit(requested_urls(self.client)[n]).query
+        return urllib.parse.parse_qs(query, keep_blank_values=True)
+
+    @pytest.mark.parametrize('value', AWKWARD_VALUES.values(), ids=AWKWARD_VALUES.keys())
+    @pytest.mark.parametrize('read', [
+        lambda c, v: c.query(filters=v),
+        lambda c, v: c.query_page(filters=v),
+        lambda c, v: c.query_all(filters=v),
+    ], ids=['query', 'query_page', 'query_all'])
+    def test_should_send_filters_exactly_as_given(self, mocker, read, value):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, search_page([], 0))
+        read(self.client, value)
+        assert self.sent_params()['filter'] == [value]
+
+    @pytest.mark.parametrize('value', AWKWARD_VALUES.values(), ids=AWKWARD_VALUES.keys())
+    def test_should_send_every_query_value_exactly_as_given(self, mocker, value):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, search_page([], 0))
+        self.client.query(q=value, filters=value, facets=value, date_facets=value, fields=value,
+                          embed=value, sort=value, lang=value, next_page_token=value)
+        params = self.sent_params()
+        for name in ('q', 'filter', 'facets', 'dateFacets', 'fields', 'embed', 'sort', 'lang', 'nextPageToken'):
+            assert params[name] == [value], name
+        assert self.client._http_client.request.call_args.kwargs['headers']['Accept-Language'] == value
+
+    def test_should_send_ids_exactly_as_given(self, mocker):
+        ids = 'urn:pydg:Cat:a&b,urn:pydg:Cat:c#d'
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, [])
+        self.client.query(ids=ids)
+        assert self.sent_params()['ids'] == [ids]
+
+    def test_should_keep_filters_on_every_page_exactly_as_given(self, mocker):
+        value = AWKWARD_VALUES['ampersand']
+        self.client._http_client.request.side_effect = paged_responses(mocker, generate_test_data_list(5), 2, tokens=True)
+        self.client.query_all(filters=value)
+        assert [self.sent_params(n)['filter'] for n in range(3)] == [[value]] * 3
+
+    def test_should_send_page_tokens_exactly_as_given(self, mocker):
+        # A base64 token can hold '+', '/' and '=': an unencoded '+' would arrive as a space.
+        token = 'ab+cd/ef=='
+        entities = generate_test_data_list(4)
+        self.client._http_client.request.side_effect = [
+            create_response_mock(mocker, 200, search_page(entities[:2], 4, token)),
+            create_response_mock(mocker, 200, search_page(entities[2:], 4, 'next')),
+        ]
+        assert self.client.get('Test') == entities
+        assert self.sent_params(1)['nextPageToken'] == [token]
+
+    def test_should_send_class_filter_exactly_as_given_when_clearing_a_dataset(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200)
+        self.client.clear_class_from_dataset('ds', 'Odd&Class')
+        assert self.sent_params()['filter'] == ['type:Odd&Class']
+
+    def test_should_keep_filter_syntax_readable(self, mocker):
+        self.client._http_client.request.return_value = create_response_mock(mocker, 200, search_page([], 0))
+        self.client.query(filters='type:Cat,Dog')
+        assert '&filter=type:Cat,Dog' in requested_urls(self.client)[0]

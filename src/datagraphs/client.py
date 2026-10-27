@@ -551,10 +551,19 @@ class Client:
             headers['Authorization'] = self._get_auth_token()
         return headers
 
-    @staticmethod
-    def _build_query(params: list[tuple[str, str]]) -> str:
-        """Build a query string from key-value pairs."""
-        return '&'.join(f'{k}={v}' for k, v in params)
+    # Characters left unencoded in query values. Both are legal in a query
+    # string, and they carry the API's syntax: ``type:Cat``, ``a,b``.
+    _QUERY_SAFE_CHARS = ':,'
+
+    @classmethod
+    def _build_query(cls, params: list[tuple[str, Any]]) -> str:
+        """Build a query string from key-value pairs, URL-encoding each value.
+
+        Every character that could change how the query string is read (``&``,
+        ``=``, ``#``, ``+``, ``%``, spaces, non-ASCII...) is encoded, so each
+        value reaches the API exactly as given.
+        """
+        return '&'.join(f'{k}={urllib.parse.quote_plus(str(v), safe=cls._QUERY_SAFE_CHARS)}' for k, v in params)
 
     def _cache_buster(self) -> str:
         """Return a cache-busting timestamp value."""
@@ -613,7 +622,7 @@ class Client:
         ) -> str:
         params = [('lang', lang), ('t', self._cache_buster())]
         if q:
-            params.append(('q', urllib.parse.quote_plus(q)))
+            params.append(('q', q))
         if filters:
             params.append(('filter', filters))
         if facets:
@@ -1264,7 +1273,7 @@ class Client:
         """
         _logger.info('Clearing down data of type %s from dataset: %s', class_name, dataset_slug)
         filter = class_name if class_name == self._ALL_TYPES_FILTER else f'type:{class_name}'
-        url = f'{self._base_url}{dataset_slug}?filter={filter}'
+        url = f'{self._base_url}{dataset_slug}?{self._build_query([("filter", filter)])}'
         self._send(HTTP.DELETE, url)
 
     def drop_dataset(self, dataset_slug: str) -> None:
