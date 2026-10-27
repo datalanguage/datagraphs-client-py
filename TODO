@@ -1,3 +1,23 @@
 TODO
 ====
 
+Client.put isolation (ISOLATION_MODE.BISECT) - known limitations, deferred
+---------------------------------------------------------------------------
+
+- Bisection can write a batch's entities out of order. Both halves of a
+  rejected group are sent before either is isolated, so entities in a rejected
+  first half are written after those in an accepted second half. If one put
+  holds the same id twice, the earlier record can therefore overwrite the
+  later one. INDIVIDUAL keeps the original order. Possible fixes: refuse (or
+  isolate one at a time) a batch holding a repeated id, or isolate the first
+  half before sending the second. Not urgent: current deliveries carry no ids,
+  and the loader refuses a write holding a repeated id.
+
+- The switch to one-at-a-time isolation lingers. The rejection-rate estimate
+  (_RejectionTally) counts only entities in rejected batches, so clean batches
+  never lower it: after one all-rejected batch, every later rejected batch in
+  the same put is isolated one entity at a time even when its rejections are
+  sparse. One reported sequence cost about 770 extra requests before switching
+  back. Possible fixes: count every entity sent (clean batches included) in the
+  estimate, or weight recent batches more heavily. The per-batch budget still
+  bounds the cost at one request per entity plus 2*ceil(log2(batch size)).
