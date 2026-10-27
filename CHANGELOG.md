@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-27
+
 ### Fixed
 - **Query values were not URL-encoded**, except `q`. A filter (or any other parameter) holding `&`, `=`, `#`, `+`, `%` or a space could cut the query string short or change its meaning, so a query quietly returned the wrong results. For example, `nickname:"Tom & Jerry"` was sent as `nickname:"Tom ` plus a stray parameter, and the `+` in `C++` arrived as a space. A `nextPageToken` holding `+` could likewise arrive changed. Every query value is now encoded, including the class filter of `clear_class_from_dataset`. `:` and `,` are left as they are, since they are legal in a query string.
 
