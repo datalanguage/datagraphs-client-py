@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-05
+
 ### Changed
 - **Logs list entities one by one only when they need correcting.** A timed-out batch logged every entity in it, once when it timed out and again in `load_data`'s summary, which buried the useful lines when loading large files. Now only entities the API rejected (`FailedWrite.rejected`) are listed by position and `id`. Entities that timed out, failed on a server or connection error, or were not sent are logged as inclusive ranges of positions, e.g. `#100-199, #300`. The results still list every entity, with its `id`.
 - Batch progress is logged with the same inclusive ranges: `Loading entities #100-199 of 1000 …` (previously `Loading batch 100-200 of 1000 entities …`), so the range in an error matches the batch it came from.
