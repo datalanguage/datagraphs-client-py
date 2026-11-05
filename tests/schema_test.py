@@ -41,52 +41,48 @@ class TestSchemaInitialization:
         assert len(schema.classes) == 1
         assert schema.classes[0]["name"] == "TestClass"
 
-    def test_should_initialize_from_legacy_format(self):
-        data = {
-            "id": "urn:models:123",
-            "guid": "123",
-            "type": "DomainModel",
-            "name": "Domain Model",
-            "description": "",
-            "project": "urn:datagraphs:custom_project",
-            "createdDate": "2024-06-01T00:00:00Z",
-            "lastModifiedDate": "2024-06-01T00:00:00Z",
-            "classes": [{
-                "label": "TestClass",
-                "labelProperty": "label",
-                "identifierProperty": "id",
-                "parentClasses": ["TestClass"],
-                "objectProperties": [{
-                    "propertyName": "label",
-                    "isOptional": False,
-                    "isArray": False,
-                    "propertyDatatype": {
-                        "id": "urn:datagraphs:datatypes:text",
-                        "type": "PropertyDatatype",
-                        "label": "text",
-                        "elasticsearchDatatype": "text",
-                        "xsdDatatype": "string"
-                    },
-                    "isNestedObject": False,
-                    "guid": "abc",
-                    "propertyOrder": 0,
-                    "isLangString": True,
-                    "id": "urn:models:123:classes:TestClass:label"
-                }]
-            }]
-        }
-        schema = DatagraphsSchema.create_from(data)
-        assert len(schema.classes) == 1
-        assert schema.classes[0]["name"] == "TestClass"
-        assert schema.classes[0]["type"] == "Class"
-        assert schema.classes[0]["properties"][0]["name"] == "label"
-
     def test_should_raise_error_on_invalid_schema(self):
         invalid_data = {
             "something": "unexpected",
         }
         with pytest.raises(SchemaError):
             DatagraphsSchema.create_from(invalid_data)
+
+    @staticmethod
+    def schema_data(*classes) -> dict:
+        return {"name": "Domain Model", "createdDate": "2024-06-01T00:00:00Z", "lastModifiedDate": "2024-06-01T00:00:00Z", "classes": list(classes)}
+
+    @staticmethod
+    def class_data(name: str) -> dict:
+        return {"type": "Class", "name": name, "labelProperty": "label", "identifierProperty": "id", "properties": [], "isAbstract": False}
+
+    def test_should_reject_a_schema_in_the_legacy_format(self):
+        legacy = self.schema_data({
+            "label": "TestClass",
+            "labelProperty": "label",
+            "identifierProperty": "id",
+            "parentClasses": ["TestClass"],
+            "objectProperties": [{"propertyName": "label", "propertyDatatype": {"id": "urn:datagraphs:datatypes:text", "label": "text"}}],
+        }) | {"id": "urn:models:123", "guid": "123", "type": "DomainModel"}
+        with pytest.raises(SchemaError, match=r'class #0 has no name.*current DataGraphs schema format'):
+            DatagraphsSchema.create_from(legacy)
+
+    @pytest.mark.parametrize('bad_class', [
+        {"type": "Class", "labelProperty": "label", "properties": []},
+        {"type": "Class", "name": ""},
+        {"type": "Class", "name": None},
+        {"type": "Class", "name": {"en": "ClassB"}},
+        "ClassB",
+    ], ids=['missing', 'empty', 'null', 'not a string', 'not a dict'])
+    def test_should_reject_any_class_without_a_name(self, bad_class):
+        data = self.schema_data(self.class_data("ClassA"), bad_class, self.class_data("ClassC"))
+        with pytest.raises(SchemaError, match=r'class #1 has no name'):
+            DatagraphsSchema.create_from(data)
+
+    def test_should_load_a_schema_whose_classes_all_have_names(self):
+        data = self.schema_data(self.class_data("ClassA"), self.class_data("ClassB"))
+        schema = DatagraphsSchema.create_from(data)
+        assert [c["name"] for c in schema.classes] == ["ClassA", "ClassB"]
 
     def test_should_raise_error_if_dict_passed_to_constructor(self):
         with pytest.raises(TypeError):
