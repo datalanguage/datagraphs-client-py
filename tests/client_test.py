@@ -14,6 +14,7 @@ from datagraphs.client import (
     FailedWrite,
     HttpStatusError,
     IncompleteReadError,
+    Positions,
     QueryPage,
     TimedOutWrite,
     TokenRequestError,
@@ -294,7 +295,7 @@ class TestErrorHandling:
         ]}
         self.client._http_client.request.return_value = create_response_mock(mocker, 400, data=error_response)
         res = self.client.put('Test', data={'id': 'entity-1', 'key': 'value'})
-        assert res.failed == [FailedWrite(0, 'entity-1', 400, error_response['errors'])]
+        assert res.failed == [FailedWrite(0, 'entity-1', 400, error_response['errors'], rejected=True)]
         assert res.loaded == 0
         assert not res.ok
 
@@ -475,6 +476,22 @@ class TestDataModification:
         assert kwargs['headers']['Authorization'] == "Bearer test_token"
 
 # Batched Write Outcome Tests
+class TestPositions:
+
+    @pytest.mark.parametrize('indices, expected', [
+        ([], ''),
+        ([5], '#5'),
+        ([3, 4, 5], '#3-5'),
+        ([9, 0, 7, 1, 8, 2, 5], '#0-2, #5, #7-9'),
+        ([1, 3], '#1, #3'),
+    ], ids=['none', 'one', 'one range', 'unordered with gaps', 'adjacent singles'])
+    def test_should_show_positions_as_inclusive_ascending_ranges(self, indices, expected):
+        assert str(Positions.of(TimedOutWrite(i, f'urn:x:{i}') for i in indices)) == expected
+
+    @pytest.mark.parametrize('first, last, expected', [(100, 199, '#100-199'), (6, 6, '#6')])
+    def test_should_show_a_span_as_one_inclusive_range(self, first, last, expected):
+        assert str(Positions.span(first, last)) == expected
+
 class TestBatchedWriteOutcomes:
     """`put` attempts every batch and accounts for every entity in exactly one outcome.
 
@@ -532,7 +549,7 @@ class TestBatchedWriteOutcomes:
         self.respond(mocker, lambda ids: (status, {'errors': errors}) if 'entity-4' in ids else (201, None))
         result = self.client.put('test-dataset', self.entities)
         self.assert_accounts_for(result, loaded=6, failed=[4], timed_out=[])
-        assert result.failed == [FailedWrite(4, 'entity-4', status, errors)]
+        assert result.failed == [FailedWrite(4, 'entity-4', status, errors, rejected=True)]
         batches = self.sent_batches()
         assert len(batches) == 6
         for single in (['entity-3'], ['entity-4'], ['entity-5']):
@@ -544,7 +561,7 @@ class TestBatchedWriteOutcomes:
         self.respond(mocker, lambda ids: (status, {'message': 'not a payload problem'}) if 'entity-4' in ids else (201, None))
         result = self.client.put('test-dataset', self.entities)
         self.assert_accounts_for(result, loaded=4, failed=[3, 4, 5], timed_out=[])
-        assert all(f.status_code == status and f.errors == ['not a payload problem'] for f in result.failed)
+        assert all(f.status_code == status and f.errors == ['not a payload problem'] and not f.rejected for f in result.failed)
         assert len(self.sent_batches()) == 3
 
     def test_should_report_timed_out_batch_entities_without_resubmitting_them(self, mocker):
@@ -570,7 +587,7 @@ class TestBatchedWriteOutcomes:
         self.client._http_client.request.side_effect = side_effect
         result = self.client.put('test-dataset', self.entities)
         self.assert_accounts_for(result, loaded=4, failed=[3, 4, 5], timed_out=[])
-        assert all(f.status_code is None and 'connection reset' in f.errors[0] for f in result.failed)
+        assert all(f.status_code is None and 'connection reset' in f.errors[0] and not f.rejected for f in result.failed)
         assert len(self.sent_batches()) == 3
 
     def test_should_report_read_timeout_as_timed_out(self, mocker):
@@ -589,17 +606,18 @@ class TestBatchedWriteOutcomes:
         result = self.client.put('test-dataset', self.entities)
         self.assert_accounts_for(result, loaded=6, failed=[4], timed_out=[])
         assert result.failed[0].status_code is None
+        assert result.failed[0].rejected
 
     def test_should_report_rejection_with_empty_body_as_failure(self, mocker):
         self.respond(mocker, lambda ids: (400, None) if 'entity-4' in ids else (201, None))
         result = self.client.put('test-dataset', self.entities)
         self.assert_accounts_for(result, loaded=6, failed=[4], timed_out=[])
-        assert result.failed == [FailedWrite(4, 'entity-4', 400, ['status 400 text'])]
+        assert result.failed == [FailedWrite(4, 'entity-4', 400, ['status 400 text'], rejected=True)]
 
     def test_should_not_resubmit_a_rejected_single_entity(self, mocker):
         self.respond(mocker, lambda ids: (400, {'errors': ['invalid']}))
         result = self.client.put('test-dataset', self.entities[0])
-        assert result.failed == [FailedWrite(0, 'entity-0', 400, ['invalid'])]
+        assert result.failed == [FailedWrite(0, 'entity-0', 400, ['invalid'], rejected=True)]
         assert result.loaded == 0
         assert self.sent_batches() == [['entity-0']]
 
@@ -633,7 +651,7 @@ class TestBatchedWriteOutcomes:
         # n4 is the second entity of the second batch, and is resubmitted alone:
         # its position is 4, not 1 (in the batch) or 0 (in its own resubmission).
         self.assert_accounts_for(result, loaded=6, failed=[4], timed_out=[])
-        assert result.failed == [FailedWrite(4, None, 400, errors)]
+        assert result.failed == [FailedWrite(4, None, 400, errors, rejected=True)]
 
     @pytest.mark.parametrize(('status', 'outcome'), [(500, 'failed'), (504, 'timed_out')])
     def test_should_report_every_entity_without_id_in_an_unsplit_batch_by_position(self, mocker, status, outcome):
@@ -655,12 +673,45 @@ class TestBatchedWriteOutcomes:
         self.assert_accounts_for(result, loaded=5, failed=[4], timed_out=[5])
         assert result.timed_out == [TimedOutWrite(5, None)]
 
-    def test_should_label_entities_by_position_and_id_in_logs(self, mocker, caplog):
+    def test_should_log_rejected_entities_by_position_and_id(self, mocker, caplog):
         self.use_entities_without_ids(with_id=(3,))
-        self.respond(mocker, lambda names: (500, None) if 'n4' in names else (201, None), key='name')
+        self.respond(mocker, lambda names: (400, {'errors': ['invalid']}) if 'n4' in names else (201, None), key='name')
         with caplog.at_level(logging.ERROR):
+            self.client.put('test-dataset', self.entities, isolation=ISOLATION_MODE.NONE)
+        assert "Dataset rejected 3 entities ['#3 entity-3', '#4 (no id)', '#5 (no id)']: ['invalid']" in caplog.text
+
+    @pytest.mark.parametrize('respond, message', [
+        (lambda ids: (504, None), 'Request timed out writing 3 entities #3-5 - the write may still have completed'),
+        (lambda ids: (500, None), "Failed to write 3 entities #3-5: ['status 500 text']"),
+        (lambda ids: (429, None), "Failed to write 3 entities #3-5: ['status 429 text']"),
+    ], ids=['timed out', 'server error', 'not about the payload'])
+    def test_should_log_entities_that_need_no_correction_by_position_range_only(self, mocker, caplog, respond, message):
+        self.respond(mocker, lambda ids: respond(ids) if 'entity-4' in ids else (201, None))
+        with caplog.at_level(logging.WARNING):
+            result = self.client.put('test-dataset', self.entities)
+        assert message in caplog.text
+        assert 'entity-' not in caplog.text
+        assert [ref.entity_id for ref in [*result.failed, *result.timed_out]] == ['entity-3', 'entity-4', 'entity-5']
+
+    def test_should_log_a_connection_failure_by_position_range_only(self, mocker, caplog):
+        def side_effect(method, url, **kwargs):
+            if any(e['id'] == 'entity-4' for e in kwargs['json']):
+                raise requests.exceptions.ConnectionError('connection reset')
+            return create_response_mock(mocker, 201)
+        self.client._http_client.request.side_effect = side_effect
+        with caplog.at_level(logging.WARNING):
             self.client.put('test-dataset', self.entities)
-        assert "['#3 entity-3', '#4 (no id)', '#5 (no id)']" in caplog.text
+        assert 'Failed to write 3 entities #3-5: ' in caplog.text
+        assert 'entity-' not in caplog.text
+
+    def test_should_log_each_batch_by_its_inclusive_range_of_positions(self, mocker, caplog):
+        self.respond(mocker, lambda ids: (201, None))
+        with caplog.at_level(logging.INFO):
+            self.client.put('test-dataset', self.entities)
+        assert [line for line in caplog.messages if 'Loading entities' in line] == [
+            f'   Loading entities {positions} of 7 into dataset test-dataset in repo: {self.client.project_name}'
+            for positions in ('#0-2', '#3-5', '#6')
+        ]
 
     def test_should_log_a_summary_when_entities_are_not_written(self, mocker, caplog):
         self.respond(mocker, lambda ids: (504, None) if 'entity-6' in ids else (400, {'errors': ['bad']}) if 'entity-0' in ids else (201, None))
@@ -1779,7 +1830,7 @@ class TestRejectedBatchIsolation:
         self.serve(mocker, {'entity-9'})
         result = self.client.put('ds', generate_test_data_list(self.BATCH_SIZE), isolation=ISOLATION_MODE.NONE)
         assert len(self.sent()) == 1
-        assert result.failed == [FailedWrite(i, f'entity-{i}', 400, ['Row 10: entity-9 is invalid']) for i in range(self.BATCH_SIZE)]
+        assert result.failed == [FailedWrite(i, f'entity-{i}', 400, ['Row 10: entity-9 is invalid'], rejected=True) for i in range(self.BATCH_SIZE)]
         assert result.loaded == 0
 
     def test_should_cost_little_more_than_one_at_a_time_when_every_entity_is_rejected(self, mocker):

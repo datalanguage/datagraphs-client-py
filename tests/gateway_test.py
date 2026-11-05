@@ -6,12 +6,21 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
-from datagraphs.client import AuthenticationError, FailedWrite, HttpStatusError, IncompleteReadError, PutResult, TimedOutWrite, TokenRequestError, UnsentWrite
+from datagraphs.client import (
+    AuthenticationError,
+    FailedWrite,
+    HttpStatusError,
+    IncompleteReadError,
+    PutResult,
+    TimedOutWrite,
+    TokenRequestError,
+    UnsentWrite,
+)
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import ISOLATION_MODE, VALIDATION_MODE
-from datagraphs.gateway import Gateway as DatagraphsGateway
 from datagraphs.gateway import DumpResult, LoadResult, SkippedClass, SkipReason
+from datagraphs.gateway import Gateway as DatagraphsGateway
 from datagraphs.schema import Schema
 
 DATA_DIR = Path(__file__).parent / 'data'
@@ -379,7 +388,7 @@ class TestLoadDataOutcomes:
         assert (result.failed, result.timed_out, result.class_errors) == ({}, {}, {})
 
     def test_should_report_failed_and_timed_out_entities_per_class_and_keep_loading(self):
-        failure = FailedWrite(0, 'urn:a', 400, ['invalid'])
+        failure = FailedWrite(0, 'urn:a', 400, ['invalid'], rejected=True)
         timeouts = [TimedOutWrite(1, 'urn:b1'), TimedOutWrite(2, None)]
         self.put_outcomes({
             'ClassA': PutResult(loaded=len(self.data) - 1, failed=[failure]),
@@ -412,7 +421,7 @@ class TestLoadDataOutcomes:
 
     @pytest.mark.parametrize('error_type', [AuthenticationError, TokenRequestError])
     def test_should_report_what_was_loaded_when_a_class_is_interrupted(self, error_type, caplog):
-        interrupted = PutResult(loaded=2, failed=[FailedWrite(0, None, 400, ['invalid'])], unsent=[UnsentWrite(3, None), UnsentWrite(4, 'urn:b')])
+        interrupted = PutResult(loaded=2, failed=[FailedWrite(0, None, 400, ['invalid'], rejected=True)], unsent=[UnsentWrite(3, None), UnsentWrite(4, 'urn:b')])
         def put(dataset_slug, data, **options):
             if self.client.put.call_count == 2:
                 error = AuthenticationError('denied') if error_type is AuthenticationError else TokenRequestError(None, ['reset'], 'reset')
@@ -495,15 +504,36 @@ class TestLoadDataOutcomes:
 
     def test_should_log_the_entities_not_written(self, caplog):
         self.put_outcomes({
-            'ClassA': PutResult(loaded=0, failed=[FailedWrite(0, 'urn:a', 400, ['invalid']), FailedWrite(3, None, 400, ['invalid'])]),
+            'ClassA': PutResult(loaded=0, failed=[FailedWrite(0, 'urn:a', 400, ['invalid'], rejected=True), FailedWrite(3, None, 400, ['invalid'], rejected=True)]),
             'ClassB': PutResult(loaded=0, timed_out=[TimedOutWrite(5, None)]),
             'ClassC': PutResult(loaded=len(self.data)),
         })
         with caplog.at_level(logging.ERROR):
             self.gateway.load_data(from_dir_path=self.dir)
         assert 'Data load incomplete' in caplog.text
-        assert "ClassA: 2 failed: ['#0 urn:a', '#3 (no id)']" in caplog.text
-        assert "ClassB: 1 timed out" in caplog.text and "['#5 (no id)']" in caplog.text
+        assert "ClassA: 2 rejected (correct before reloading): ['#0 urn:a', '#3 (no id)']" in caplog.text
+        assert 'ClassB: 1 timed out (may have been written - verify before reloading): #5' in caplog.text
+
+    def test_should_log_only_rejected_entities_by_id_and_the_rest_by_position_range(self, caplog):
+        def refs(kind, indices, **fields):
+            return [kind(i, f'urn:x:{i}', **fields) for i in indices]
+        self.put_outcomes({
+            'ClassA': PutResult(loaded=0, failed=[
+                *refs(FailedWrite, [7, 8, 9], status_code=502, errors=['bad gateway']),
+                *refs(FailedWrite, [4], status_code=400, errors=['invalid'], rejected=True),
+                *refs(FailedWrite, [0, 1, 2], status_code=502, errors=['bad gateway']),
+            ]),
+            'ClassB': PutResult(loaded=0, timed_out=refs(TimedOutWrite, [*range(200, 300), *range(100), 150])),
+            'ClassC': PutResult(loaded=0, unsent=refs(UnsentWrite, range(100, 200))),
+        })
+        with caplog.at_level(logging.ERROR):
+            result = self.gateway.load_data(from_dir_path=self.dir)
+        assert "   ClassA: 1 rejected (correct before reloading): ['#4 urn:x:4']" in caplog.messages
+        assert '   ClassA: 6 failed: #0-2, #7-9' in caplog.messages
+        assert '   ClassB: 201 timed out (may have been written - verify before reloading): #0-99, #150, #200-299' in caplog.messages
+        assert '   ClassC: 100 not sent (safe to resubmit): #100-199' in caplog.messages
+        assert [urn for urn in ('urn:x:0', 'urn:x:150', 'urn:x:100', 'urn:x:4') if urn in caplog.text] == ['urn:x:4']
+        assert len(result.failed['ClassA']) == 7 and len(result.timed_out['ClassB']) == 201 and len(result.unsent['ClassC']) == 100
 
 class TestClearData:
 
@@ -549,7 +579,7 @@ class TestLoadDataEntityPositions:
 
         # Batches of two: 'bad' is second in the second batch, which is rejected and
         # resubmitted entity by entity; it is reported at its position in the file.
-        assert result.failed == {'ClassA': [FailedWrite(3, None, 400, ['bad has an invalid value'])]}
+        assert result.failed == {'ClassA': [FailedWrite(3, None, 400, ['bad has an invalid value'], rejected=True)]}
         assert json.loads(data_file.read_text(encoding='utf-8'))[result.failed['ClassA'][0].index]['name'] == 'bad'
         assert result.loaded == 4
         assert result.timed_out == {}

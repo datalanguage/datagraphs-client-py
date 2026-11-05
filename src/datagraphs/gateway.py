@@ -9,7 +9,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from datagraphs.client import AuthenticationError, FailedWrite, PutResult, TimedOutWrite, TokenRequestError, UnsentWrite
+from datagraphs.client import (
+    AuthenticationError,
+    FailedWrite,
+    Positions,
+    PutResult,
+    TimedOutWrite,
+    TokenRequestError,
+    UnsentWrite,
+)
 from datagraphs.client import Client as DatagraphsClient
 from datagraphs.dataset import Dataset
 from datagraphs.enums import ISOLATION_MODE, SCHEMA_APPLY_MODE, VALIDATION_MODE
@@ -53,7 +61,8 @@ class LoadResult:
     :ivar skipped: Per class, why it was not loaded: no data file, an empty
         one, or (for a single requested class) no dataset. Base classes, whose
         data loads via their subclasses, are not included.
-    :ivar failed: Per class, the entities that were not written and why.
+    :ivar failed: Per class, the entities that were not written and why
+        (see `FailedWrite.rejected` for which need correcting).
     :ivar timed_out: Per class, the entities whose write timed out and may or
         may not have completed (see `PutResult.timed_out` for how to verify
         them before reloading).
@@ -383,13 +392,22 @@ class Gateway:
             'Data load incomplete: %d entities loaded, %d failed, %d timed out, %d not sent, %d classes errored, %d classes skipped, %d classes not attempted',
             result.loaded, result.failed_count, result.timed_out_count, result.unsent_count, len(result.class_errors), len(result.skipped), len(result.remaining),
         )
+        # Only rejected entities are listed one by one, as they are the ones to
+        # correct: the others are summarised by position, to keep the log readable.
         for class_name, failures in result.failed.items():
-            _logger.error('   %s: %d failed: %s', class_name, len(failures), [f.describe() for f in failures])
+            rejected: list[FailedWrite] = []
+            not_rejected: list[FailedWrite] = []
+            for failure in failures:
+                (rejected if failure.rejected else not_rejected).append(failure)
+            if rejected:
+                _logger.error('   %s: %d rejected (correct before reloading): %s', class_name, len(rejected), [f.describe() for f in rejected])
+            if not_rejected:
+                _logger.error('   %s: %d failed: %s', class_name, len(not_rejected), Positions.of(not_rejected))
         for class_name, timeouts in result.timed_out.items():
             _logger.error('   %s: %d timed out (may have been written - verify before reloading): %s',
-                          class_name, len(timeouts), [t.describe() for t in timeouts])
+                          class_name, len(timeouts), Positions.of(timeouts))
         for class_name, unsent in result.unsent.items():
-            _logger.error('   %s: %d not sent (safe to resubmit): %s', class_name, len(unsent), [u.describe() for u in unsent])
+            _logger.error('   %s: %d not sent (safe to resubmit): %s', class_name, len(unsent), Positions.of(unsent))
         for class_name, error in result.class_errors.items():
             _logger.error('   %s: not loaded: %s', class_name, error)
         if result.remaining:

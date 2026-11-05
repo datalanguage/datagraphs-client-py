@@ -7,7 +7,7 @@ import math
 import random
 import time
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum, auto
@@ -131,6 +131,40 @@ class _SubmittedEntity:
         return f'#{self.index} {self.entity_id}' if self.entity_id is not None else f'#{self.index} (no id)'
 
 @dataclass(frozen=True)
+class Positions:
+    """Positions in the data passed to `Client.put`, shown as inclusive ranges in ascending order.
+
+    ``str(Positions.of(result.timed_out))`` gives e.g. ``#100-199, #250``: a
+    compact summary for when the entities need no correcting, so listing
+    each one would be noise. The ranges are only worked out when it is
+    converted to a string, so a log message that is not emitted costs
+    nothing to build.
+
+    :ivar indices: The distinct positions, in any order.
+    """
+
+    indices: Sequence[int]
+
+    @classmethod
+    def of(cls, entities: Iterable[_SubmittedEntity]) -> 'Positions':
+        """The positions of *entities*, e.g. the ``timed_out`` of a `PutResult`."""
+        return cls(tuple(entity.index for entity in entities))
+
+    @classmethod
+    def span(cls, first: int, last: int) -> 'Positions':
+        """The positions from *first* to *last* inclusive, e.g. those of one batch."""
+        return cls(range(first, last + 1))
+
+    def __str__(self) -> str:
+        runs: list[list[int]] = []
+        for index in sorted(self.indices):
+            if runs and index == runs[-1][1] + 1:
+                runs[-1][1] = index
+            else:
+                runs.append([index, index])
+        return ', '.join(f'#{first}' if first == last else f'#{first}-{last}' for first, last in runs)
+
+@dataclass(frozen=True)
 class FailedWrite(_SubmittedEntity):
     """An entity the API did not accept.
 
@@ -140,10 +174,16 @@ class FailedWrite(_SubmittedEntity):
         no response was received (e.g. a connection error or an unserialisable
         payload).
     :ivar errors: The error details for the failure.
+    :ivar rejected: True when the API refused the request's payload (a 4xx
+        validation error) or it could not be serialised, so the entity must be
+        corrected before it can be written. False when the request failed for
+        another reason, such as a server or connection error, so the entity
+        may be written by resubmitting it unchanged.
     """
 
     status_code: int | None
     errors: list[Any]
+    rejected: bool = False
 
 @dataclass(frozen=True)
 class TimedOutWrite(_SubmittedEntity):
@@ -226,14 +266,18 @@ class _PutLedger:
         refs = [(index, _entity_id(entity)) for index, entity in enumerate(batch, start=start)]
         if outcome is _BatchOutcome.TIMED_OUT:
             timed_out = [TimedOutWrite(index, entity_id) for index, entity_id in refs]
-            _logger.warning('Request timed out writing %d entities - the write may still have completed: %s',
-                            len(timed_out), [t.describe() for t in timed_out])
+            _logger.warning('Request timed out writing %d entities %s - the write may still have completed',
+                            len(timed_out), Positions.of(timed_out))
             self.result.timed_out.extend(timed_out)
             return
         status_code = error.status_code if isinstance(error, HttpStatusError) else None
         errors = error.errors if isinstance(error, HttpStatusError) else [str(error)]
-        failures = [FailedWrite(index, entity_id, status_code, errors) for index, entity_id in refs]
-        _logger.error('Failed to write %d entities %s: %s', len(failures), [f.describe() for f in failures], errors)
+        rejected = outcome is _BatchOutcome.REJECTED
+        failures = [FailedWrite(index, entity_id, status_code, errors, rejected) for index, entity_id in refs]
+        if rejected:
+            _logger.error('Dataset rejected %d entities %s: %s', len(failures), [f.describe() for f in failures], errors)
+        else:
+            _logger.error('Failed to write %d entities %s: %s', len(failures), Positions.of(failures), errors)
         self.result.failed.extend(failures)
 
     def record_rest_unsent(self) -> None:
@@ -1007,12 +1051,12 @@ class Client:
         for i in range(0, length, self._batch_size):
             batch = entities[i:i + self._batch_size]
             if length > self._batch_size:
-                _logger.info('   Loading batch %d-%d of %d entities into dataset %s in repo: %s', i, i + len(batch), length, dataset, self.project_name)
+                _logger.info('   Loading entities %s of %d into dataset %s in repo: %s', Positions.span(i, i + len(batch) - 1), length, dataset, self.project_name)
             outcome, error = self._put_batch(url, batch)
             if outcome is _BatchOutcome.REJECTED and len(batch) > 1 and isolation is not ISOLATION_MODE.NONE:
                 budget = _IsolationBudget(limit=len(batch) + self._isolation_slack(isolation, len(batch), tally), unresolved=len(batch))
-                _logger.warning('Batch %d-%d of %d entities rejected by dataset %s (%s) - resubmitting to isolate the rejected entities (at most %d requests)',
-                                i, i + len(batch), length, dataset, error, budget.limit)
+                _logger.warning('Entities %s of %d rejected by dataset %s (%s) - resubmitting to isolate the rejected entities (at most %d requests)',
+                                Positions.span(i, i + len(batch) - 1), length, dataset, error, budget.limit)
                 self._isolate(url, batch, i, ledger, budget)
                 tally.entities += len(batch)
                 tally.rejected += budget.rejected
