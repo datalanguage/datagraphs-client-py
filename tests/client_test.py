@@ -1646,7 +1646,7 @@ class TestOtherOperationFailures:
 # obtained, so the token's failure must not be read as the request's outcome.
 class TestTokenFailures:
 
-    TOKEN = {'token_type': TOKEN_TYPE, 'access_token': ACCESS_TOKEN}
+    TOKEN: ClassVar[dict[str, str]] = {'token_type': TOKEN_TYPE, 'access_token': ACCESS_TOKEN}
 
     @pytest.fixture(scope="function", autouse=True)
     def setup(self, get_client):

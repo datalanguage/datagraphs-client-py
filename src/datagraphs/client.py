@@ -618,7 +618,7 @@ class Client:
         if isinstance(error, HttpStatusError) and error.retry_after_s is not None:
             return min(error.retry_after_s, self._RETRY_MAX_DELAY_S)
         backoff_s = min(self._RETRY_BASE_DELAY_S * 2 ** (attempt - 1), self._RETRY_MAX_DELAY_S)
-        return random.uniform(backoff_s / 2, backoff_s)  # noqa: S311 - jitter, not cryptography
+        return random.uniform(backoff_s / 2, backoff_s)
 
     @staticmethod
     def _retry_after_s(response: requests.Response) -> float | None:
