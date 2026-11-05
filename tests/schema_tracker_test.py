@@ -45,7 +45,7 @@ class TestChangeTrackingBaseline:
     # mutations made by Schema (which aliases its input dict) cannot leak
     # between tests.
 
-    _NEW_FORMAT_DATA: ClassVar[dict] = {
+    _SCHEMA_DATA: ClassVar[dict] = {
         "name": "My Model v1.0",
         "createdDate": "2024-06-01T00:00:00Z",
         "lastModifiedDate": "2024-06-01T00:00:00Z",
@@ -71,53 +71,11 @@ class TestChangeTrackingBaseline:
         ],
     }
 
-    _LEGACY_FORMAT_DATA: ClassVar[dict] = {
-        "id": "urn:models:999",
-        "guid": "999",
-        "type": "DomainModel",
-        "name": "Legacy Model",
-        "description": "",
-        "project": "urn:datagraphs:custom_project",
-        "createdDate": "2024-06-01T00:00:00Z",
-        "lastModifiedDate": "2024-06-01T00:00:00Z",
-        "classes": [
-            {
-                "label": "Substance",
-                "labelProperty": "label",
-                "identifierProperty": "id",
-                "parentClasses": ["Substance"],
-                "objectProperties": [
-                    {
-                        "propertyName": "label",
-                        "isOptional": False,
-                        "isArray": False,
-                        "propertyDatatype": {
-                            "id": "urn:datagraphs:datatypes:text",
-                            "type": "PropertyDatatype",
-                            "label": "text",
-                            "elasticsearchDatatype": "text",
-                            "xsdDatatype": "string",
-                        },
-                        "isNestedObject": False,
-                        "guid": "abc",
-                        "propertyOrder": 0,
-                        "isLangString": True,
-                        "id": "urn:models:999:classes:Substance:label",
-                    }
-                ],
-            }
-        ],
-    }
+    def _schema_data(self) -> dict:
+        """Return a fresh deep copy of _SCHEMA_DATA for each test."""
+        return copy.deepcopy(TestChangeTrackingBaseline._SCHEMA_DATA)
 
-    def _new_format_data(self) -> dict:
-        """Return a fresh deep copy of _NEW_FORMAT_DATA for each test."""
-        return copy.deepcopy(TestChangeTrackingBaseline._NEW_FORMAT_DATA)
-
-    def _legacy_format_data(self) -> dict:
-        """Return a fresh deep copy of _LEGACY_FORMAT_DATA for each test."""
-        return copy.deepcopy(TestChangeTrackingBaseline._LEGACY_FORMAT_DATA)
-
-    # -------------------------------------------------------------- new-format
+    # ------------------------------------------------------------ construction
 
     def test_empty_schema_has_empty_change_log(self):
         schema = DatagraphsSchema()
@@ -142,70 +100,49 @@ class TestChangeTrackingBaseline:
         assert len(schema._schema["classes"]) == 1
 
     def test_create_from_has_empty_change_log(self):
-        schema = DatagraphsSchema.create_from(self._new_format_data())
+        schema = DatagraphsSchema.create_from(self._schema_data())
         assert schema._tracker.change_log == []
 
     def test_create_from_has_zero_tracking_depth(self):
-        schema = DatagraphsSchema.create_from(self._new_format_data())
+        schema = DatagraphsSchema.create_from(self._schema_data())
         assert schema._tracker.depth == 0
 
     def test_create_from_has_baseline_matching_loaded_data(self):
-        schema = DatagraphsSchema.create_from(self._new_format_data())
+        schema = DatagraphsSchema.create_from(self._schema_data())
         # Baseline classes should reflect the loaded data, not the empty state.
         assert len(schema._tracker.baseline["classes"]) == 1
         assert schema._tracker.baseline["classes"][0]["name"] == "Drug"
 
     def test_create_from_baseline_is_independent_copy(self):
-        schema = DatagraphsSchema.create_from(self._new_format_data())
+        schema = DatagraphsSchema.create_from(self._schema_data())
         original_count = len(schema._tracker.baseline["classes"])
         schema.create_class("ExtraClass")
         assert len(schema._tracker.baseline["classes"]) == original_count
         assert len(schema._schema["classes"]) == original_count + 1
 
-    # ----------------------------------------------------------- legacy-format
-
-    def test_legacy_load_has_empty_change_log(self):
-        """Loading a legacy schema must report 0 changes (baseline is post-transform)."""
-        schema = DatagraphsSchema.create_from(self._legacy_format_data())
-        assert schema._tracker.change_log == []
-
-    def test_legacy_load_has_zero_tracking_depth(self):
-        schema = DatagraphsSchema.create_from(self._legacy_format_data())
-        assert schema._tracker.depth == 0
-
-    def test_legacy_load_baseline_reflects_transformed_data(self):
-        """Baseline is captured after old_to_new transform, so it matches the
-        new-format representation, not the original legacy dict."""
-        schema = DatagraphsSchema.create_from(self._legacy_format_data())
-        # After transform the class should have been renamed from the legacy
-        # 'label' field to 'name'.
-        assert len(schema._tracker.baseline["classes"]) == 1
-        assert schema._tracker.baseline["classes"][0].get("name") == "Substance"
-        assert schema._tracker.baseline["classes"][0].get("type") == "Class"
-
     # --------------------------------------------------------------- clone
 
     def test_clone_has_empty_change_log(self):
         """clone() routes through create_from so it must start at 0 changes."""
-        schema = DatagraphsSchema.create_from(self._new_format_data())
+        schema = DatagraphsSchema.create_from(self._schema_data())
         schema.create_class("TransientClass")  # would add to change_log once Phase 2 lands
         cloned = schema.clone()
         assert cloned._tracker.change_log == []
 
     def test_clone_has_zero_tracking_depth(self):
-        cloned = DatagraphsSchema.create_from(self._new_format_data()).clone()
+        cloned = DatagraphsSchema.create_from(self._schema_data()).clone()
         assert cloned._tracker.depth == 0
 
     def test_clone_baseline_matches_cloned_state(self):
         """The clone's baseline must reflect what was cloned, not the original
         schema's baseline."""
-        schema = DatagraphsSchema.create_from(self._new_format_data())
+        schema = DatagraphsSchema.create_from(self._schema_data())
         cloned = schema.clone()
         assert cloned._tracker.baseline["classes"][0]["name"] == "Drug"
 
     def test_clone_baseline_is_independent_from_original(self):
         """Mutating the clone must not affect the original's baseline."""
-        schema = DatagraphsSchema.create_from(self._new_format_data())
+        schema = DatagraphsSchema.create_from(self._schema_data())
         cloned = schema.clone()
         cloned.create_class("CloneOnly")
         assert len(schema._tracker.baseline["classes"]) == 1
@@ -229,14 +166,14 @@ class TestChangeTrackingBaseline:
         assert "_tracking_depth" not in j
 
     def test_create_from_baseline_absent_from_to_dict(self):
-        schema = DatagraphsSchema.create_from(self._new_format_data())
+        schema = DatagraphsSchema.create_from(self._schema_data())
         d = schema.to_dict()
         assert "_baseline" not in d
         assert "_change_log" not in d
         assert "_tracking_depth" not in d
 
     def test_create_from_baseline_absent_from_to_json(self):
-        schema = DatagraphsSchema.create_from(self._new_format_data())
+        schema = DatagraphsSchema.create_from(self._schema_data())
         j = schema.to_json()
         assert "_baseline" not in j
         assert "_change_log" not in j
@@ -244,7 +181,7 @@ class TestChangeTrackingBaseline:
 
     def test_to_dict_output_byte_identical_before_and_after_phase1(self):
         """to_dict() must return the live _schema unchanged — no tracking keys."""
-        schema = DatagraphsSchema.create_from(self._new_format_data())
+        schema = DatagraphsSchema.create_from(self._schema_data())
         result = schema.to_dict()
         # The live _schema is exactly what was passed in (minus metadata updates
         # from _set_internal_schema, which update lastModifiedDate in-place).

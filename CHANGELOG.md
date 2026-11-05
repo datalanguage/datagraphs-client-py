@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `FailedWrite.rejected` is true when the API refused the entity's payload (a 4xx validation error) or it could not be serialised, so it must be corrected before it can be written. It is false when the request failed for another reason, such as a server or connection error, or a 404 or 429, so the entity may be written by resubmitting it unchanged.
 - `datagraphs.client.Positions` shows a set of positions in the data passed to `put` as inclusive ranges, e.g. `str(Positions.of(result.timed_out))` gives `#100-199, #250`. The logs use it, and it is only rendered when a message is actually emitted.
 
+### Removed
+- **Support for the legacy schema format.** `Schema.create_from` no longer converts a schema dict in the format DataGraphs used before its schema structure changed. It now raises `SchemaError` for one, and for any schema with a class that has no `name`, naming the class's position. Pass it a dict in the current format, as returned by `Client.get_schema` or `Schema.to_dict`.
+- `utils.SchemaTransformer`, which converted schemas between the legacy and current formats.
+- `tests_integration/comprehensive_schema_test.py`, a manual script from the schema migration that compared the two formats. It no longer ran, and it built its own client instead of using the `pydg`-only `get_client`.
+
 ## [0.12.0] - 2026-10-27
 
 ### Fixed

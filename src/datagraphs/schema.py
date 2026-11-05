@@ -8,7 +8,6 @@ from typing import Self
 from datagraphs.enums import DATATYPE, REPORT_FORMAT
 from datagraphs.schema_report import build_change_report
 from datagraphs.schema_tracker import ChangeTracker
-from datagraphs.utils import SchemaTransformer
 
 
 class SchemaError(Exception):
@@ -80,20 +79,17 @@ class Schema:
     def create_from(data: dict, version: str = "") -> Self:
         """Create a `Schema` from a dictionary.
 
-        Automatically detects and converts legacy-format schemas.
-
-        :param data: Schema dictionary (new or legacy format).
+        :param data: Schema dictionary, as returned by `Client.get_schema` or `Schema.to_dict`.
         :param version: Schema version override.
         :returns: A new `Schema` instance.
-        :raises SchemaError: If the dict is missing required keys.
+        :raises SchemaError: If the dict is missing required keys, or any class
+            has no name (as in the legacy schema format, which is not supported).
         """
-        if Schema._is_legacy_format(data):
-            data = SchemaTransformer.old_to_new(data)
         schema = Schema(version=version)
         schema._set_internal_schema(data, version)
-        # _set_internal_schema rebinds schema._schema to the post-transform dict;
-        # a fresh tracker re-baselines from it (and re-points at the new dict) so
-        # legacy conversion and construction-time metadata never appear as changes.
+        # _set_internal_schema rebinds schema._schema to *data*; a fresh tracker
+        # re-baselines from it (and re-points at the new dict) so construction-time
+        # metadata never appears as a change.
         schema._tracker = ChangeTracker(schema._schema)
         return schema
 
@@ -124,15 +120,6 @@ class Schema:
         if name or version or len(self._schema.get('name', '')) == 0:
             self._schema['name'] = f"{name or 'Domain Model'} v{self.version}"
 
-    @staticmethod
-    def _is_legacy_format(schema: dict) -> bool:
-        """Detect whether a schema dict uses the legacy (old) format."""
-        classes = schema.get('classes', [])
-        if classes:
-            first = classes[0]
-            return 'objectProperties' in first or ('label' in first and 'type' not in first)
-        return 'guid' in schema
-
     def _set_internal_schema(self, data: dict, version: str) -> None:
         self._validate_schema(data)
         self._apply_metadata(version=version)
@@ -143,6 +130,15 @@ class Schema:
         if not all(key in schema for key in required_keys):
             missing_keys = required_keys - set(schema.keys())
             raise SchemaError(f"Invalid schema. Missing keys: {', '.join(missing_keys)}")
+        # Every class in the current format is identified by its name. A class
+        # without one is most likely from the legacy format, which named
+        # classes by 'label' and is no longer supported.
+        for position, class_def in enumerate(schema['classes']):
+            if not isinstance(class_def, dict) or not isinstance(class_def.get('name'), str) or not class_def['name']:
+                raise SchemaError(
+                    f"Invalid schema: class #{position} has no name. Schemas must be in the current DataGraphs "
+                    "schema format, as returned by Client.get_schema or Schema.to_dict."
+                )
 
     @property
     def classes(self) -> list[dict]:
@@ -155,7 +151,7 @@ class Schema:
         return self._version
     
     def _make_description(self, text: str) -> dict:
-        """Create a description dict in the new format."""
+        """Create a description dict, with *text* as both its ``en`` and ``@none`` value."""
         return {"en": text, "@none": text}
 
     def _get_description_text(self, desc: str | dict) -> str:
