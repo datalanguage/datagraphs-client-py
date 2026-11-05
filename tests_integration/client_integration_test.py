@@ -1,7 +1,8 @@
 import pytest
+from lib import get_client, get_data, get_datasets, get_empty_schema, get_schema
+
 from datagraphs.client import HttpStatusError
 from datagraphs.enums import ISOLATION_MODE
-from lib import get_client, get_data, get_datasets, get_empty_schema, get_schema
 
 
 class TestClient:

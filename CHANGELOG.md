@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Logs list entities one by one only when they need correcting.** A timed-out batch logged every entity in it, once when it timed out and again in `load_data`'s summary, which buried the useful lines when loading large files. Now only entities the API rejected (`FailedWrite.rejected`) are listed by position and `id`. Entities that timed out, failed on a server or connection error, or were not sent are logged as inclusive ranges of positions, e.g. `#100-199, #300`. The results still list every entity, with its `id`.
+- Batch progress is logged with the same inclusive ranges: `Loading entities #100-199 of 1000 …` (previously `Loading batch 100-200 of 1000 entities …`), so the range in an error matches the batch it came from.
+
+### Added
+- `FailedWrite.rejected` is true when the API refused the entity's payload (a 4xx validation error) or it could not be serialised, so it must be corrected before it can be written. It is false when the request failed for another reason, such as a server or connection error, or a 404 or 429, so the entity may be written by resubmitting it unchanged.
+- `datagraphs.client.Positions` shows a set of positions in the data passed to `put` as inclusive ranges, e.g. `str(Positions.of(result.timed_out))` gives `#100-199, #250`. The logs use it, and it is only rendered when a message is actually emitted.
+
 ## [0.12.0] - 2026-10-27
 
 ### Fixed
