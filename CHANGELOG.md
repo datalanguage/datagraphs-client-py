@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Removed
 - **Support for the legacy schema format.** `Schema.create_from` no longer converts a schema dict in the format DataGraphs used before its schema structure changed. It now raises `SchemaError` for one, and for any schema with a class that has no `name`, naming the class's position. Pass it a dict in the current format, as returned by `Client.get_schema` or `Schema.to_dict`.
 - `utils.SchemaTransformer`, which converted schemas between the legacy and current formats.
+- `tests_integration/comprehensive_schema_test.py`, a manual script from the schema migration that compared the two formats. It no longer ran, and it built its own client instead of using the `pydg`-only `get_client`.
 
 ## [0.12.0] - 2026-10-27
 
