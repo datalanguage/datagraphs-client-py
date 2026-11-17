@@ -159,7 +159,7 @@ class Gateway:
             self._schema = self._client.get_schema()
         return self._schema
 
-    def load_project(self, schema: Schema, datasets: list[Dataset], validation_mode: VALIDATION_MODE = VALIDATION_MODE.PROMPT) -> None:
+    def load_project(self, schema: Schema, datasets: list[Dataset], validation_mode: VALIDATION_MODE = VALIDATION_MODE.PROMPT, schema_apply_mode: SCHEMA_APPLY_MODE = SCHEMA_APPLY_MODE.APPLY) -> None:
         """Deploy the project schema and datasets to the API.
 
         N.B. This deletes and/or removes all blocking data dependencies before applying the new schema and datasets.
@@ -174,7 +174,7 @@ class Gateway:
         validation_mode = VALIDATION_MODE(validation_mode)
         if self._validate_datasets(datasets, self._client.get_datasets(), validation_mode):
             try:
-                self._client.apply_schema(schema, mode=SCHEMA_APPLY_MODE.FORCE)
+                self._client.apply_schema(schema, mode=schema_apply_mode)
                 self._client.apply_datasets(datasets)
             except Exception as e:  # noqa: BLE001 - intentional: surface any deploy failure via logging rather than propagating
                 _logger.error('Error loading project: %s', str(e))
