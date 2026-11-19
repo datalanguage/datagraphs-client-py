@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-19
+
 ### Added
 - **Validation rules on properties.** `Schema.create_property` and `Schema.update_property` take `validation_rules`, a list of `ValidationRule`s, e.g. `ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 200)`. Which rules a property may have depends on its datatype:
   - a text or keyword property may have one each of `REGEX`, `MIN_LENGTH` and `MAX_LENGTH`;
