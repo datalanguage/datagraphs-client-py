@@ -1,14 +1,18 @@
+import dataclasses
+import json
 import sys
 
 import pytest
 
-from datagraphs.enums import DATATYPE
+from datagraphs.enums import DATATYPE, VALIDATION_RULE_TYPE
 from datagraphs.schema import (
     ClassNotFoundError,
+    InvalidEnumeratorError,
     InvalidInversePropertyError,
     PropertyExistsError,
     PropertyNotFoundError,
     SchemaError,
+    ValidationRule,
 )
 from datagraphs.schema import Schema as DatagraphsSchema
 
@@ -830,3 +834,367 @@ class TestUpdatePropertyInverseOf:
         prop = schema.find_property(schema.find_class("Dog")["properties"], "rel")
         assert "inverseOf" not in prop
         assert prop["description"]["@none"] == "ORIGINAL"
+
+
+MIN_3 = ValidationRule(VALIDATION_RULE_TYPE.MIN_LENGTH, 3)
+MAX_50 = ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 50)
+CODE_PATTERN = ValidationRule(VALIDATION_RULE_TYPE.REGEX, "^[A-Z]{3}$")
+
+
+def rules_of(schema, class_name, prop_name):
+    """The property's validationRules as the serialised schema shows them, or None."""
+    for class_def in json.loads(schema.to_json())["classes"]:
+        if class_def["name"] == class_name:
+            prop = next(p for p in class_def["properties"] if p["name"] == prop_name)
+            return prop.get("validationRules")
+    raise AssertionError(f"class {class_name} not found")
+
+
+class TestValidationRule:
+
+    @pytest.mark.parametrize(("rule_type", "rule"), [
+        (VALIDATION_RULE_TYPE.MIN_LENGTH, 0),
+        (VALIDATION_RULE_TYPE.MAX_LENGTH, 255),
+        (VALIDATION_RULE_TYPE.REGEX, "^[a-z]+$"),
+    ])
+    def test_should_serialise_a_valid_rule_as_type_and_value(self, rule_type, rule):
+        assert ValidationRule(rule_type, rule).to_dict() == {"type": str(rule_type), "value": rule}
+
+    def test_should_accept_the_rule_type_as_its_api_string(self):
+        rule = ValidationRule("maxLength", 10)
+        assert rule.rule_type is VALIDATION_RULE_TYPE.MAX_LENGTH
+        assert rule == ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 10)
+
+    @pytest.mark.parametrize(("rule_type", "rule", "error"), [
+        ("notARule", 1, ValueError),
+        ("enum", ["a"], ValueError),  # the DATATYPE value, not the rule type
+        (VALIDATION_RULE_TYPE.MIN_LENGTH, -1, ValueError),
+        (VALIDATION_RULE_TYPE.MAX_LENGTH, "10", TypeError),
+        (VALIDATION_RULE_TYPE.MAX_LENGTH, 10.0, TypeError),
+        (VALIDATION_RULE_TYPE.MAX_LENGTH, True, TypeError),
+        (VALIDATION_RULE_TYPE.REGEX, "", ValueError),
+        (VALIDATION_RULE_TYPE.REGEX, 123, TypeError),
+        (VALIDATION_RULE_TYPE.ENUM, "abc", TypeError),
+        (VALIDATION_RULE_TYPE.ENUM, 3, TypeError),
+    ])
+    def test_should_reject_an_invalid_rule_when_constructed(self, rule_type, rule, error):
+        with pytest.raises(error):
+            ValidationRule(rule_type, rule)
+
+    def test_should_be_immutable_and_hashable(self):
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            MAX_50.rule = 10
+        assert {MAX_50, ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 50)} == {MAX_50}
+
+    def test_should_not_change_when_the_list_it_was_built_from_changes(self):
+        values = ["a", "b"]
+        rule = ValidationRule(VALIDATION_RULE_TYPE.ENUM, values)
+        values.append("c")
+        assert rule.to_dict() == {"type": "enumeration", "value": ["a", "b"]}
+        assert hash(rule) == hash(ValidationRule(VALIDATION_RULE_TYPE.ENUM, ["a", "b"]))
+
+
+class TestPropertyValidationRules:
+
+    @pytest.fixture(autouse=True)
+    def setup_schema(self):
+        self.schema = DatagraphsSchema()
+        self.schema.create_class("Thing")
+
+    # --- which rules suit which datatype ----------------------------------
+
+    @pytest.mark.parametrize("datatype", [DATATYPE.TEXT, DATATYPE.KEYWORD])
+    def test_should_give_a_text_or_keyword_property_its_rules_in_the_order_given(self, datatype):
+        self.schema.create_property("Thing", "code", datatype, validation_rules=[CODE_PATTERN, MIN_3, MAX_50])
+        assert rules_of(self.schema, "Thing", "code") == [
+            {"type": "customRegex", "value": "^[A-Z]{3}$"},
+            {"type": "minLength", "value": 3},
+            {"type": "maxLength", "value": 50},
+        ]
+
+    def test_should_give_an_enum_property_its_allowed_values_from_enums(self):
+        self.schema.create_property("Thing", "size", DATATYPE.ENUM, enums=["S", "M"])
+        assert rules_of(self.schema, "Thing", "size") == [{"type": "enumeration", "value": ["S", "M"]}]
+
+    def test_should_give_an_enum_property_its_allowed_values_from_an_enum_rule(self):
+        rule = ValidationRule(VALIDATION_RULE_TYPE.ENUM, ["S", "M"])
+        self.schema.create_property("Thing", "size", DATATYPE.ENUM, validation_rules=[rule])
+        assert rules_of(self.schema, "Thing", "size") == [{"type": "enumeration", "value": ["S", "M"]}]
+
+    @pytest.mark.parametrize(("datatype", "rule"), [
+        (DATATYPE.ENUM, MIN_3),
+        (DATATYPE.ENUM, CODE_PATTERN),
+        (DATATYPE.TEXT, ValidationRule(VALIDATION_RULE_TYPE.ENUM, ["S"])),
+        (DATATYPE.KEYWORD, ValidationRule(VALIDATION_RULE_TYPE.ENUM, ["S"])),
+        (DATATYPE.INTEGER, MAX_50),
+        (DATATYPE.DATE, CODE_PATTERN),
+        (DATATYPE.URL, MAX_50),
+        ("Other", MIN_3),  # an object property
+    ])
+    def test_should_reject_a_rule_the_datatype_does_not_allow(self, datatype, rule):
+        self.schema.create_class("Other")
+        before = self.schema.to_dict()
+        with pytest.raises(ValueError, match=rf"Thing\.code is a {datatype} property"):
+            self.schema.create_property("Thing", "code", datatype, validation_rules=[rule])
+        assert self.schema.to_dict() == before
+
+    @pytest.mark.parametrize("datatype", [DATATYPE.TEXT, DATATYPE.INTEGER])
+    def test_should_reject_enum_values_for_a_property_that_is_not_an_enum(self, datatype):
+        with pytest.raises(ValueError, match="cannot have enum values"):
+            self.schema.create_property("Thing", "code", datatype, enums=["S"])
+
+    def test_should_reject_enum_values_given_both_ways(self):
+        rule = ValidationRule(VALIDATION_RULE_TYPE.ENUM, ["S"])
+        with pytest.raises(ValueError, match="not both"):
+            self.schema.create_property("Thing", "size", DATATYPE.ENUM, enums=["M"], validation_rules=[rule])
+
+    # --- create_property -------------------------------------------------
+
+    @pytest.mark.parametrize("rules", [None, []])
+    def test_should_create_a_property_without_rules_when_none_are_given(self, rules):
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT, validation_rules=rules)
+        assert rules_of(self.schema, "Thing", "code") is None
+
+    def test_should_accept_equal_minimum_and_maximum_lengths(self):
+        rules = [ValidationRule(VALIDATION_RULE_TYPE.MIN_LENGTH, 5), ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 5)]
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT, validation_rules=rules)
+        assert len(rules_of(self.schema, "Thing", "code")) == 2
+
+    def test_should_not_change_an_enum_property_when_the_callers_list_changes(self):
+        enums = ["S", "M"]
+        self.schema.create_property("Thing", "size", DATATYPE.ENUM, enums=enums)
+        enums.append("L")
+        assert rules_of(self.schema, "Thing", "size") == [{"type": "enumeration", "value": ["S", "M"]}]
+
+    def test_should_give_every_subclass_its_own_copy_of_the_rules(self):
+        self.schema.create_subclass("Part", "", "Thing")
+        self.schema.create_property("Thing", "size", DATATYPE.ENUM, enums=["S"], apply_to_subclasses=True)
+        expected = [{"type": "enumeration", "value": ["S"]}]
+        assert rules_of(self.schema, "Thing", "size") == expected
+        assert rules_of(self.schema, "Part", "size") == expected
+        # Changing one class's live property must leave the other's alone.
+        part_prop = self.schema.find_property(self.schema.find_class("Part")["properties"], "size")
+        part_prop["validationRules"][0]["value"].append("XL")
+        assert rules_of(self.schema, "Thing", "size") == expected
+
+    @pytest.mark.parametrize(("rules", "error"), [
+        ([{"type": "minLength", "value": 3}], TypeError),
+        ([MIN_3, ValidationRule(VALIDATION_RULE_TYPE.MIN_LENGTH, 4)], ValueError),
+        ([ValidationRule(VALIDATION_RULE_TYPE.MIN_LENGTH, 51), MAX_50], ValueError),
+    ])
+    def test_should_reject_invalid_rules_without_creating_the_property(self, rules, error):
+        self.schema.create_subclass("Part", "", "Thing")
+        before, report_before = self.schema.to_dict(), self.schema.change_report("records")
+        with pytest.raises(error):
+            self.schema.create_property("Thing", "code", DATATYPE.TEXT, validation_rules=rules, apply_to_subclasses=True)
+        assert self.schema.to_dict() == before
+        assert self.schema.change_report("records") == report_before
+
+    # --- update_property -------------------------------------------------
+
+    def test_should_add_rules_to_a_property_that_has_none(self):
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT)
+        self.schema.update_property("Thing", "code", validation_rules=[MAX_50])
+        assert rules_of(self.schema, "Thing", "code") == [{"type": "maxLength", "value": 50}]
+
+    def test_should_replace_a_propertys_rules_rather_than_add_to_them(self):
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT, validation_rules=[MIN_3, MAX_50])
+        self.schema.update_property("Thing", "code", validation_rules=[ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 10)])
+        self.schema.update_property("Thing", "code", validation_rules=[ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 20)])
+        assert rules_of(self.schema, "Thing", "code") == [{"type": "maxLength", "value": 20}]
+
+    def test_should_replace_an_enum_propertys_allowed_values_either_way(self):
+        self.schema.create_property("Thing", "size", DATATYPE.ENUM, enums=["S"])
+        self.schema.update_property("Thing", "size", enums=["M"])
+        assert rules_of(self.schema, "Thing", "size") == [{"type": "enumeration", "value": ["M"]}]
+        self.schema.update_property("Thing", "size", validation_rules=[ValidationRule(VALIDATION_RULE_TYPE.ENUM, ["L"])])
+        assert rules_of(self.schema, "Thing", "size") == [{"type": "enumeration", "value": ["L"]}]
+
+    def test_should_remove_every_rule_when_given_an_empty_list(self):
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT, validation_rules=[MIN_3])
+        self.schema.update_property("Thing", "code", validation_rules=[])
+        assert rules_of(self.schema, "Thing", "code") is None
+
+    def test_should_leave_the_rules_alone_when_none_are_given(self):
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT, validation_rules=[MIN_3])
+        self.schema.update_property("Thing", "code", description="changed")
+        assert rules_of(self.schema, "Thing", "code") == [{"type": "minLength", "value": 3}]
+
+    def test_should_check_rules_against_the_existing_datatype_when_none_is_given(self):
+        self.schema.create_property("Thing", "size", DATATYPE.ENUM, enums=["S"])
+        with pytest.raises(ValueError, match="is a enum property"):
+            self.schema.update_property("Thing", "size", validation_rules=[MIN_3])
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT)
+        with pytest.raises(ValueError, match="cannot have enum values"):
+            self.schema.update_property("Thing", "code", enums=["S"])
+        assert rules_of(self.schema, "Thing", "size") == [{"type": "enumeration", "value": ["S"]}]
+        assert rules_of(self.schema, "Thing", "code") is None
+
+    def test_should_check_rules_against_the_new_datatype_when_one_is_given(self):
+        self.schema.create_property("Thing", "code", DATATYPE.INTEGER)
+        with pytest.raises(ValueError, match="is a integer property"):
+            self.schema.update_property("Thing", "code", datatype=DATATYPE.INTEGER, validation_rules=[MIN_3])
+        self.schema.update_property("Thing", "code", datatype=DATATYPE.TEXT, validation_rules=[MIN_3])
+        assert rules_of(self.schema, "Thing", "code") == [{"type": "minLength", "value": 3}]
+
+    @pytest.mark.parametrize(("start", "new_datatype", "expected"), [
+        ("enum", DATATYPE.TEXT, None),
+        ("text", DATATYPE.INTEGER, None),
+        ("text", DATATYPE.KEYWORD, [{"type": "minLength", "value": 3}]),
+        ("text", DATATYPE.TEXT, [{"type": "minLength", "value": 3}]),
+    ])
+    def test_should_drop_only_the_rules_a_new_datatype_does_not_allow(self, start, new_datatype, expected):
+        if start == "enum":
+            self.schema.create_property("Thing", "prop", DATATYPE.ENUM, enums=["S"])
+        else:
+            self.schema.create_property("Thing", "prop", DATATYPE.TEXT, validation_rules=[MIN_3])
+        self.schema.update_property("Thing", "prop", datatype=new_datatype)
+        assert rules_of(self.schema, "Thing", "prop") == expected
+
+    def test_should_switch_an_enum_property_to_text_rules_in_one_update(self):
+        self.schema.create_property("Thing", "prop", DATATYPE.ENUM, enums=["S"])
+        self.schema.update_property("Thing", "prop", datatype=DATATYPE.TEXT, validation_rules=[MAX_50])
+        assert rules_of(self.schema, "Thing", "prop") == [{"type": "maxLength", "value": 50}]
+        self.schema.update_property("Thing", "prop", datatype=DATATYPE.ENUM, enums=["M"])
+        assert rules_of(self.schema, "Thing", "prop") == [{"type": "enumeration", "value": ["M"]}]
+
+    def test_should_update_the_rules_of_every_subclass(self):
+        self.schema.create_subclass("Part", "", "Thing")
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT, validation_rules=[MIN_3], apply_to_subclasses=True)
+        self.schema.update_property("Thing", "code", validation_rules=[MAX_50], apply_to_subclasses=True)
+        assert rules_of(self.schema, "Thing", "code") == [{"type": "maxLength", "value": 50}]
+        assert rules_of(self.schema, "Part", "code") == [{"type": "maxLength", "value": 50}]
+
+    def test_should_change_no_class_when_a_subclasss_datatype_does_not_allow_the_rules(self):
+        self.schema.create_subclass("Part", "", "Thing")
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT)
+        self.schema.create_property("Part", "code", DATATYPE.INTEGER)
+        before = self.schema.to_dict()
+        with pytest.raises(ValueError, match=r"Part\.code is a integer property"):
+            self.schema.update_property("Thing", "code", validation_rules=[MIN_3], apply_to_subclasses=True)
+        assert self.schema.to_dict() == before
+
+    def test_should_report_a_change_of_rules(self):
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT, validation_rules=[MIN_3])
+        schema = DatagraphsSchema.create_from(self.schema.to_dict())
+        schema.update_property("Thing", "code", validation_rules=[MAX_50])
+        assert schema.change_report("records") == [{
+            "target": "Thing.code", "kind": "property", "op": "modified",
+            "fields": [{
+                "field": "validationRules",
+                "before": [{"type": "minLength", "value": 3}],
+                "after": [{"type": "maxLength", "value": 50}],
+            }],
+        }]
+
+    @pytest.mark.parametrize(("rules", "error"), [
+        ([MAX_50, "maxLength"], TypeError),
+        ([MAX_50, ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 10)], ValueError),
+        ([ValidationRule(VALIDATION_RULE_TYPE.MIN_LENGTH, 51), MAX_50], ValueError),
+    ])
+    def test_should_reject_invalid_rules_without_changing_the_property(self, rules, error):
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT, validation_rules=[MIN_3])
+        before = self.schema.to_dict()
+        with pytest.raises(error):
+            self.schema.update_property("Thing", "code", description="changed", validation_rules=rules)
+        assert self.schema.to_dict() == before
+
+    # --- rules this client does not model ----------------------------------
+
+    def _schema_with_unmodelled_rule(self):
+        self.schema.create_property("Thing", "code", DATATYPE.TEXT, validation_rules=[MIN_3])
+        data = self.schema.to_dict()
+        code = next(p for p in data["classes"][0]["properties"] if p["name"] == "code")
+        code["validationRules"].append({"type": "someFutureRule", "value": {"x": 1}})
+        return DatagraphsSchema.create_from(data)
+
+    def test_should_keep_an_unmodelled_rule_when_the_datatype_does_not_change(self):
+        schema = self._schema_with_unmodelled_rule()
+        schema.update_property("Thing", "code", datatype=DATATYPE.TEXT, description="changed")
+        assert rules_of(schema, "Thing", "code") == [
+            {"type": "minLength", "value": 3},
+            {"type": "someFutureRule", "value": {"x": 1}},
+        ]
+
+    # --- create_subclass -------------------------------------------------
+
+    def test_should_give_a_new_subclass_every_inherited_rule(self):
+        self.schema.create_property("Thing", "size", DATATYPE.ENUM, enums=["S", "M"])
+        self.schema.create_property("Thing", "code", DATATYPE.KEYWORD, validation_rules=[CODE_PATTERN, MIN_3, MAX_50])
+        self.schema.create_property("Thing", "free", DATATYPE.TEXT)
+        self.schema.create_subclass("Part", "", "Thing")
+        for prop_name in ("size", "code", "free"):
+            assert rules_of(self.schema, "Part", prop_name) == rules_of(self.schema, "Thing", prop_name)
+
+    def test_should_give_a_new_subclass_rules_this_client_does_not_model(self):
+        schema = self._schema_with_unmodelled_rule()
+        schema.create_subclass("Part", "", "Thing")
+        assert rules_of(schema, "Part", "code") == [
+            {"type": "minLength", "value": 3},
+            {"type": "someFutureRule", "value": {"x": 1}},
+        ]
+
+
+class TestEnumPropertyNeedsPermittedValues:
+
+    @pytest.fixture(autouse=True)
+    def setup_schema(self):
+        self.schema = DatagraphsSchema()
+        self.schema.create_class("Thing")
+
+    def assert_rejected_without_change(self, action):
+        before = self.schema.to_dict()
+        with pytest.raises(InvalidEnumeratorError) as caught:
+            action()
+        assert isinstance(caught.value, SchemaError)
+        assert self.schema.to_dict() == before
+
+    @pytest.mark.parametrize("values", [
+        {},
+        {"enums": []},
+        {"validation_rules": []},
+        {"validation_rules": [ValidationRule(VALIDATION_RULE_TYPE.ENUM, [])]},
+    ])
+    def test_should_not_create_an_enum_property_without_permitted_values(self, values):
+        self.assert_rejected_without_change(
+            lambda: self.schema.create_property("Thing", "size", DATATYPE.ENUM, **values))
+
+    def test_should_not_make_a_property_an_enum_without_permitted_values(self):
+        self.schema.create_property("Thing", "size", DATATYPE.TEXT, validation_rules=[MIN_3])
+        self.assert_rejected_without_change(
+            lambda: self.schema.update_property("Thing", "size", datatype=DATATYPE.ENUM))
+
+    @pytest.mark.parametrize("values", [
+        {"enums": []},
+        {"validation_rules": []},
+        {"validation_rules": [ValidationRule(VALIDATION_RULE_TYPE.ENUM, [])]},
+        {"datatype": DATATYPE.ENUM, "enums": []},
+    ])
+    def test_should_not_remove_the_permitted_values_of_an_enum_property(self, values):
+        self.schema.create_property("Thing", "size", DATATYPE.ENUM, enums=["S"])
+        self.assert_rejected_without_change(
+            lambda: self.schema.update_property("Thing", "size", **values))
+
+    @pytest.mark.parametrize("values", [
+        {"description": "changed"},
+        {"datatype": DATATYPE.ENUM},
+    ])
+    def test_should_keep_the_permitted_values_through_an_update_that_does_not_give_any(self, values):
+        self.schema.create_property("Thing", "size", DATATYPE.ENUM, enums=["S"])
+        self.schema.update_property("Thing", "size", **values)
+        assert rules_of(self.schema, "Thing", "size") == [{"type": "enumeration", "value": ["S"]}]
+
+    def test_should_not_cascade_an_update_that_leaves_a_subclass_enum_without_values(self):
+        self.schema.create_subclass("Part", "", "Thing")
+        self.schema.create_property("Thing", "size", DATATYPE.TEXT)
+        self.schema.create_property("Part", "size", DATATYPE.ENUM, enums=["S"])
+        self.assert_rejected_without_change(
+            lambda: self.schema.update_property("Thing", "size", validation_rules=[], apply_to_subclasses=True))
+
+    def test_should_not_create_a_subclass_of_a_class_whose_enum_has_no_values(self):
+        self.schema.create_property("Thing", "size", DATATYPE.ENUM, enums=["S"])
+        data = self.schema.to_dict()
+        size = next(p for p in data["classes"][0]["properties"] if p["name"] == "size")
+        del size["validationRules"]
+        self.schema = DatagraphsSchema.create_from(data)
+        self.assert_rejected_without_change(lambda: self.schema.create_subclass("Part", "", "Thing"))

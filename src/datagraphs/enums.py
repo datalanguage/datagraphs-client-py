@@ -37,6 +37,12 @@ class SCHEMA_APPLY_MODE(StrEnum):
     APPLY = 'apply'
     FORCE = 'force'
 
+class VALIDATION_RULE_TYPE(StrEnum):
+    ENUM = 'enumeration'
+    REGEX = 'customRegex'
+    MIN_LENGTH = 'minLength'
+    MAX_LENGTH = 'maxLength'
+
 class ISOLATION_MODE(StrEnum):
     """How `Client.put` finds the entities the API rejected in a rejected batch.
 

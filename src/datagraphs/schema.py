@@ -1,11 +1,13 @@
 """Schema definition and manipulation for DataGraphs domain models."""
 
+import copy
 import datetime
 import json
 from collections import deque
-from typing import Self
+from dataclasses import dataclass
+from typing import Any, Self
 
-from datagraphs.enums import DATATYPE, REPORT_FORMAT
+from datagraphs.enums import DATATYPE, REPORT_FORMAT, VALIDATION_RULE_TYPE
 from datagraphs.schema_report import build_change_report
 from datagraphs.schema_tracker import ChangeTracker
 
@@ -24,6 +26,89 @@ class PropertyExistsError(SchemaError):
 
 class InvalidInversePropertyError(SchemaError):
     """Raised when an invalid inverse property is specified."""
+
+class InvalidEnumeratorError(SchemaError):
+    """Raised when an enum property would be left without permitted values."""
+
+_LENGTH_RULE_TYPES = frozenset({VALIDATION_RULE_TYPE.MIN_LENGTH, VALIDATION_RULE_TYPE.MAX_LENGTH})
+_TEXT_RULE_TYPES = _LENGTH_RULE_TYPES | {VALIDATION_RULE_TYPE.REGEX}
+
+# The rule types a property of each datatype may have. Datatypes not listed,
+# and object properties, may have none.
+_RULE_TYPES_BY_DATATYPE: dict[str, frozenset[VALIDATION_RULE_TYPE]] = {
+    DATATYPE.ENUM: frozenset({VALIDATION_RULE_TYPE.ENUM}),
+    DATATYPE.TEXT: _TEXT_RULE_TYPES,
+    DATATYPE.KEYWORD: _TEXT_RULE_TYPES,
+}
+
+
+@dataclass(frozen=True)
+class ValidationRule:
+    """A validation rule for a property, e.g. ``ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 200)``.
+
+    The rule is checked when it is constructed, so an invalid one never reaches
+    a schema. Which rules a property may have depends on its datatype: an
+    ``ENUM`` rule on an enum property, and ``REGEX``, ``MIN_LENGTH`` and
+    ``MAX_LENGTH`` rules on a text or keyword property.
+
+    :ivar rule_type: The kind of rule. A plain string such as ``'maxLength'``
+        is converted to the matching `VALIDATION_RULE_TYPE`.
+    :ivar rule: The rule's value: a non-negative integer for ``MIN_LENGTH`` and
+        ``MAX_LENGTH``, a non-empty pattern string for ``REGEX``, or a sequence
+        of allowed values for ``ENUM`` (stored as a tuple).
+    :raises ValueError: If *rule_type* is not a `VALIDATION_RULE_TYPE`, or a
+        length is negative or a pattern is empty.
+    :raises TypeError: If *rule* has the wrong type for *rule_type*.
+    """
+
+    rule_type: VALIDATION_RULE_TYPE
+    rule: Any
+
+    def __post_init__(self) -> None:
+        # A frozen dataclass can only normalise its own fields this way.
+        rule_type = VALIDATION_RULE_TYPE(self.rule_type)
+        object.__setattr__(self, 'rule_type', rule_type)
+        rule = self.rule
+        if rule_type in _LENGTH_RULE_TYPES:
+            if not isinstance(rule, int) or isinstance(rule, bool):
+                raise TypeError(f"A {rule_type} rule needs an integer, not {rule!r}")
+            if rule < 0:
+                raise ValueError(f"A {rule_type} rule cannot be negative: {rule}")
+        elif rule_type == VALIDATION_RULE_TYPE.REGEX:
+            if not isinstance(rule, str):
+                raise TypeError(f"A {rule_type} rule needs a pattern string, not {rule!r}")
+            if not rule:
+                raise ValueError(f"A {rule_type} rule needs a non-empty pattern")
+        elif isinstance(rule, (str, bytes)) or not hasattr(rule, '__iter__'):
+            raise TypeError(f"An {rule_type} rule needs a sequence of values, not {rule!r}")
+        else:
+            # Stored as a tuple so the frozen rule really cannot change.
+            object.__setattr__(self, 'rule', tuple(rule))
+
+    def to_dict(self) -> dict:
+        """The rule as it appears in a property's ``validationRules``."""
+        value = list(self.rule) if self.rule_type == VALIDATION_RULE_TYPE.ENUM else self.rule
+        return {"type": str(self.rule_type), "value": value}
+
+
+def _resulting_enum_values(
+    enums: list | None, validation_rules: list[ValidationRule] | None, existing_prop: dict | None,
+) -> list | tuple:
+    """The permitted values an enum property will have once a create or update
+    is applied: those the call gives, or else the property's current ones."""
+    if validation_rules is not None:
+        # The call replaces the rules, so only its own ENUM rule counts.
+        return next((rule.rule for rule in validation_rules if rule.rule_type == VALIDATION_RULE_TYPE.ENUM), ())
+    if enums is not None:
+        return enums
+    if existing_prop is None or existing_prop.get("range") != DATATYPE.ENUM:
+        return ()
+    return next(
+        (rule.get("value") or () for rule in existing_prop.get("validationRules", [])
+         if rule.get("type") == VALIDATION_RULE_TYPE.ENUM),
+        (),
+    )
+
 
 class Schema:
     """In-memory representation of a DataGraphs domain model schema.
@@ -216,6 +301,8 @@ class Schema:
         :param description: Description for the subclass.
         :param parent_class_name: Name of the parent class to inherit from.
         :raises ClassNotFoundError: If the parent class does not exist.
+        :raises InvalidEnumeratorError: If an enum property of the parent class
+            has no permitted values, so the subclass could not inherit it validly.
         """
         with self._tracker.track() as outermost, self._tracker.atomic(outermost):
             class_def = self.find_class(parent_class_name)
@@ -224,16 +311,21 @@ class Schema:
             label_prop_name = class_def['labelProperty']
             label_prop_def = self.find_property(class_def['properties'], label_prop_name)
             self.create_class(class_name, description, parent_class_name, label_prop_name, label_prop_def.get('isLangString', False))
+            subclass_props = self.find_class(class_name)['properties']
             for prop_def in class_def['properties']:
                 if prop_def['name'] != label_prop_name:
-                    validation_rules = prop_def.get('validationRules', [])
                     range_value = prop_def['range']
                     try:
                         datatype = DATATYPE(range_value)
                     except ValueError:
                         datatype = range_value
-                    enums = validation_rules[0].get('value', []) if validation_rules else []
                     desc = self._get_description_text(prop_def.get('description'))
+                    # An enum property must be created with its permitted values.
+                    enums = next(
+                        (list(rule.get('value') or []) for rule in prop_def.get('validationRules', [])
+                         if rule.get('type') == VALIDATION_RULE_TYPE.ENUM),
+                        None,
+                    ) if datatype == DATATYPE.ENUM else None
                     self.create_property(
                         class_name,
                         prop_def['name'],
@@ -249,6 +341,15 @@ class Schema:
                         prop_def.get('isFilterable', None),
                         apply_to_subclasses=False,
                     )
+                    # Copy the rules verbatim, not through ValidationRule: an
+                    # inherited rule must survive even if this client does not
+                    # model its type. The new property is the last one appended,
+                    # and rollback removes it whole, so this needs no journalling.
+                    inherited_prop = subclass_props[-1]
+                    if 'validationRules' in prop_def:
+                        inherited_prop['validationRules'] = copy.deepcopy(prop_def['validationRules'])
+                    else:
+                        inherited_prop.pop('validationRules', None)
             if outermost:
                 # Capture the names of the properties INHERITED from the parent
                 # AT CREATION TIME (op-time intent, consistent with how
@@ -424,6 +525,7 @@ class Schema:
         enums: list | None = None,
         is_synonym: bool = False,
         is_filterable: bool | None = None,
+        validation_rules: list[ValidationRule] | None = None,
         apply_to_subclasses: bool = False,
     ) -> None:
         """Create a new property on a class.
@@ -440,19 +542,32 @@ class Schema:
             languages.
         :param inverse_of: Name of the inverse property on the target class
             (object properties only).
-        :param enums: Allowed values for ``DATATYPE.ENUM`` properties.
+        :param enums: Allowed values for ``DATATYPE.ENUM`` properties: shorthand
+            for an ``ENUM`` rule in *validation_rules*.
         :param is_synonym: Whether this property is a label synonym.
         :param is_filterable: Whether the property is available as a facet/filter.
+        :param validation_rules: Rules the property's values must satisfy, at
+            most one of each type: an ``ENUM`` rule for an enum property, or
+            ``REGEX``, ``MIN_LENGTH`` and ``MAX_LENGTH`` rules for a text or
+            keyword property.
         :param apply_to_subclasses: If ``True``, also creates the property on all
             existing subclasses.
         :raises ClassNotFoundError: If the class (or referenced class) does not exist.
         :raises PropertyExistsError: If a property with the same name already exists.
         :raises InvalidInversePropertyError: If the inverse property specification
             is invalid.
+        :raises TypeError: If *validation_rules* holds anything but `ValidationRule`.
+        :raises ValueError: If a rule, or *enums*, does not suit *datatype*; if
+            *validation_rules* holds two rules of one type or a minimum length
+            above the maximum length; or if both *enums* and *validation_rules*
+            are given.
+        :raises InvalidEnumeratorError: If *datatype* is ``DATATYPE.ENUM`` and
+            neither *enums* nor an ``ENUM`` rule gives any permitted values.
         """
         with self._tracker.track() as outermost, self._tracker.atomic(outermost):
             if enums is None:
                 enums = []
+            self._check_validation_rules(f"{class_name}.{prop_name}", str(datatype), enums, validation_rules)
             if not (hasattr(datatype, 'value') and (datatype.value in {i.value for i in DATATYPE})) and not isinstance(datatype, str):
                 raise TypeError(f"Unspecified datatype for {class_name}.{prop_name}")
 
@@ -495,7 +610,7 @@ class Schema:
                 self._create_property_on_class(
                     cdef, cdef["name"], prop_name, datatype, description,
                     is_optional, is_array, is_nested, is_lang_string,
-                    inverse_of, enums, is_synonym, is_filterable,
+                    inverse_of, enums, is_synonym, is_filterable, validation_rules,
                 )
 
             # The op-time intent set is the cascade footprint minus the parent
@@ -515,6 +630,7 @@ class Schema:
         datatype: DATATYPE | str, description: str, is_optional: bool,
         is_array: bool, is_nested: bool, is_lang_string: bool, inverse_of: str,
         enums: list, is_synonym: bool, is_filterable: bool | None,
+        validation_rules: list[ValidationRule] | None,
     ) -> None:
         """Create one property on one already-resolved class dict.
 
@@ -538,7 +654,11 @@ class Schema:
         self._assign_is_optional(prop_def, is_optional)
         self._assign_is_array(prop_def, is_array)
         self._assign_inverse_of(prop_def, owner_class_name, inverse_of, datatype)
-        self._assign_enum(prop_def, datatype, enums)
+        # The caller has checked that enums and validation_rules are not both given.
+        if validation_rules:
+            self._assign_validation_rules(prop_def, validation_rules)
+        else:
+            self._assign_enum(prop_def, datatype, enums)
         self._assign_is_synonym(prop_def, is_synonym)
         if is_filterable is not None:
             self._assign_is_filterable(prop_def, is_filterable)
@@ -582,10 +702,7 @@ class Schema:
 
     def _assign_enum(self, prop_def: dict, datatype: DATATYPE | str, enums: list) -> None:
         if datatype == DATATYPE.ENUM:
-            prop_def["validationRules"] = [{
-                "type": "enumeration",
-                "value": enums,
-            }]
+            self._assign_validation_rules(prop_def, [ValidationRule(VALIDATION_RULE_TYPE.ENUM, enums)])
 
     def _assign_is_filterable(self, prop_def: dict, is_filterable: bool | None = None) -> None:
         if is_filterable is not None:
@@ -594,6 +711,63 @@ class Schema:
     def _assign_is_synonym(self, prop_def: dict, is_synonym: bool) -> None:
         if is_synonym is not None:
             prop_def["isLabelSynonym"] = is_synonym
+
+    @staticmethod
+    def _assign_validation_rules(prop_def: dict, validation_rules: list[ValidationRule]) -> None:
+        """Replace the property's rules with *validation_rules*; none removes
+        ``validationRules`` altogether. Each call builds fresh dicts, so
+        properties never share a rule's value with each other or the caller."""
+        if validation_rules:
+            prop_def["validationRules"] = [rule.to_dict() for rule in validation_rules]
+        else:
+            prop_def.pop("validationRules", None)
+
+    @staticmethod
+    def _drop_rules_unsuited_to_datatype(prop_def: dict) -> None:
+        """Remove the rules the property's datatype does not allow, e.g. the
+        enumeration of a property that is no longer an enum. Call it only when
+        the datatype has changed, so rules this client does not model survive
+        every other update."""
+        allowed = _RULE_TYPES_BY_DATATYPE.get(prop_def["range"], frozenset())
+        rules = [rule for rule in prop_def.get("validationRules", []) if rule.get("type") in allowed]
+        if rules:
+            prop_def["validationRules"] = rules
+        else:
+            prop_def.pop("validationRules", None)
+
+    @staticmethod
+    def _check_validation_rules(
+        where: str, datatype: str, enums: list | None,
+        validation_rules: list[ValidationRule] | None, existing_prop: dict | None = None,
+    ) -> None:
+        """Reject *enums* or *validation_rules* that a *datatype* property cannot
+        have, before anything changes. *existing_prop* is the property being
+        updated, whose rules stand wherever the call does not replace them."""
+        if enums and datatype != DATATYPE.ENUM:
+            raise ValueError(f"{where} is a {datatype} property, so it cannot have enum values")
+        if validation_rules is not None:
+            if enums:
+                raise ValueError(f"Give the allowed values of {where} with enums or an ENUM validation rule, not both")
+            allowed = _RULE_TYPES_BY_DATATYPE.get(datatype, frozenset())
+            by_type: dict[VALIDATION_RULE_TYPE, ValidationRule] = {}
+            for rule in validation_rules:
+                if not isinstance(rule, ValidationRule):
+                    raise TypeError(f"Validation rules for {where} must be ValidationRule instances, not {rule!r}")
+                if rule.rule_type not in allowed:
+                    raise ValueError(f"{where} is a {datatype} property, so it cannot have a {rule.rule_type} rule")
+                if rule.rule_type in by_type:
+                    raise ValueError(f"{where} has more than one {rule.rule_type} rule")
+                by_type[rule.rule_type] = rule
+            min_rule = by_type.get(VALIDATION_RULE_TYPE.MIN_LENGTH)
+            max_rule = by_type.get(VALIDATION_RULE_TYPE.MAX_LENGTH)
+            if min_rule and max_rule and min_rule.rule > max_rule.rule:
+                raise ValueError(
+                    f"{where} has a minimum length ({min_rule.rule}) above its maximum length ({max_rule.rule})"
+                )
+        if datatype == DATATYPE.ENUM and not _resulting_enum_values(enums, validation_rules, existing_prop):
+            raise InvalidEnumeratorError(
+                f"{where} is an enum property, so it needs an ENUM validation rule (or enums) listing its permitted values"
+            )
 
     def _is_valid_inverse_of(self, class_name: str, inverse_of: str, datatype: DATATYPE | str) -> bool:
         """Validate that *inverse_of* on *datatype* points back at *class_name*.
@@ -656,6 +830,7 @@ class Schema:
         enums: list | None = None,
         is_synonym: bool = False,
         is_filterable: bool | None = None,
+        validation_rules: list[ValidationRule] | None = None,
         apply_to_subclasses: bool | None = None,
     ) -> None:
         """Update an existing property on a class.
@@ -674,9 +849,15 @@ class Schema:
         :param inverse_of: Name of the inverse property on the target class. Validated
             against *datatype* when one is given, otherwise against the property's
             existing range, so an inverse can be added without restating the type.
-        :param enums: Allowed enumeration values.
+        :param enums: Allowed enumeration values: shorthand for an ``ENUM`` rule
+            in *validation_rules*.
         :param is_synonym: Whether this property is a label synonym.
         :param is_filterable: Whether the property is available as a filter.
+        :param validation_rules: The property's complete set of rules, replacing
+            its current ones; ``[]`` removes them all. The rules allowed are those
+            of `create_property`, for the property's new datatype when *datatype*
+            is given. Changing *datatype* also removes any rules the new datatype
+            does not allow, such as the enumeration of a former enum property.
         :param apply_to_subclasses: If ``True``, also updates the property on all
             existing subclasses.
         :raises ClassNotFoundError: If the class does not exist.
@@ -684,6 +865,15 @@ class Schema:
         :raises InvalidInversePropertyError: If *inverse_of* does not name an object
             property on the target class whose range is *class_name* or one of its
             base classes.
+        :raises TypeError: If *validation_rules* holds anything but `ValidationRule`.
+        :raises ValueError: If a rule, or *enums*, does not suit the property's
+            datatype; if *validation_rules* holds two rules of one type or a
+            minimum length above the maximum length; or if both *enums* and
+            *validation_rules* are given.
+        :raises InvalidEnumeratorError: If the property is, or becomes, an enum
+            property and the update would leave it without permitted values:
+            e.g. changing *datatype* to ``DATATYPE.ENUM`` without *enums*, or
+            passing ``enums=[]`` or ``validation_rules=[]`` to an enum property.
         """
         with self._tracker.track() as outermost, self._tracker.atomic(outermost):
             # Build the by-name and parent->children indices ONCE (FIX round-4 B3):
@@ -708,6 +898,10 @@ class Schema:
                     raise PropertyNotFoundError(
                         f"Property '{prop_name}' not found in class '{name}'"
                     )
+                # Each target is checked against its own datatype, which the
+                # same-named property on a subclass need not share.
+                effective_datatype = str(datatype) if datatype is not None else pdef["range"]
+                self._check_validation_rules(f"{name}.{prop_name}", effective_datatype, enums, validation_rules, pdef)
                 targets.append((cdef, pdef))
 
             # Apply iteratively (no Python recursion; FIX B4).  ALL-OR-NOTHING:
@@ -720,7 +914,7 @@ class Schema:
                 self._update_property_on_class(
                     cdef, pdef, cdef["name"], datatype, description, is_optional,
                     is_array, is_nested, is_lang_string, inverse_of, enums,
-                    is_synonym, is_filterable,
+                    is_synonym, is_filterable, validation_rules,
                 )
 
             applied_subclasses = target_names[1:] if (outermost and apply_to_subclasses) else []
@@ -736,7 +930,8 @@ class Schema:
     def _update_property_on_class(
         self, class_def: dict, prop_def: dict, owner_class_name: str,
         datatype: DATATYPE | str, description, is_optional, is_array,
-        is_nested, is_lang_string, inverse_of, enums, is_synonym, is_filterable,
+        is_nested, is_lang_string, inverse_of, enums, is_synonym,
+        is_filterable, validation_rules,
     ) -> None:
         """Update one already-resolved property on one already-resolved class.
 
@@ -752,7 +947,10 @@ class Schema:
         if is_array is not None:
             self._assign_is_array(prop_def, is_array)
         if datatype is not None:
+            old_range = prop_def.get("range")
             self._assign_datatype(prop_def, datatype, is_nested if is_nested is not None else False, is_lang_string if is_lang_string is not None else True)
+            if prop_def["range"] != old_range:
+                self._drop_rules_unsuited_to_datatype(prop_def)
         if inverse_of is not None:
             # Fall back to the property's existing range when the caller did not
             # restate the datatype — the same thing the enum branch below does.
@@ -767,6 +965,8 @@ class Schema:
             self._assign_is_filterable(prop_def, is_filterable)
         if is_synonym is not None:
             self._assign_is_synonym(prop_def, is_synonym)
+        if validation_rules is not None:
+            self._assign_validation_rules(prop_def, validation_rules)
 
     def rename_property(self, class_name: str, old_prop_name: str, new_prop_name: str) -> None:
         """Rename a property.

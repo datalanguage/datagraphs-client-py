@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Validation rules on properties.** `Schema.create_property` and `Schema.update_property` take `validation_rules`, a list of `ValidationRule`s, e.g. `ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 200)`. Which rules a property may have depends on its datatype:
+  - a text or keyword property may have one each of `REGEX`, `MIN_LENGTH` and `MAX_LENGTH`;
+  - an enum property has one `ENUM` rule listing its permitted values, which `enums` remains a shorthand for;
+  - a property of any other datatype, or an object property, has none.
+- In `update_property`, `validation_rules` replaces the property's rules, and `[]` removes them all. Leaving it out keeps them.
+- `datagraphs.schema.ValidationRule` and `datagraphs.enums.VALIDATION_RULE_TYPE`. A `ValidationRule` is immutable and is checked when it is constructed. A length must be a non-negative integer, and a pattern a non-empty string.
+- `datagraphs.schema.InvalidEnumeratorError`, a `SchemaError`. It is raised when an enum property would be left without permitted values: one created without any, a property changed to an enum without any, or an update that passes `enums=[]` or `validation_rules=[]` to an enum property. `create_subclass` also raises it when the parent class has an enum property without values.
+- Invalid rules raise before the schema changes, even when the change would cascade to subclasses. `ValueError` is raised for a rule the property's datatype does not allow, two rules of one type, or a minimum length above the maximum length. `TypeError` is raised for anything that is not a `ValidationRule`.
+
+### Changed
+- **`enums` for a property that is not an enum now raises `ValueError`.** Previously it was silently ignored. Giving permitted values both as `enums` and as an `ENUM` rule also raises `ValueError`.
+- Changing a property's datatype with `update_property` removes the rules the new datatype does not allow. For example, an enum property changed to text loses its permitted values, and a text property changed to keyword keeps its rules. Restating the same datatype removes nothing.
+
+### Fixed
+- `create_subclass` gave the subclass only the permitted values of an enum property, read from the property's first rule. It now copies every inherited rule as it is, including rule types this client does not model.
+- A property's permitted values were the caller's own list, shared by every class the property was cascaded to, so changing the list afterwards changed the schema. Each property now holds its own copy.
+
 ## [0.13.0] - 2026-11-05
 
 ### Changed
