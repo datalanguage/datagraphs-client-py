@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`Schema.update_property` changed fields it was not given, and ignored some it was.** It now changes only the fields passed to it, as documented.
+  - `is_nested` and `is_lang_string` were ignored unless `datatype` was passed too, so `update_property(..., is_nested=True)` left an object property not nested.
+  - Every update cleared `isLabelSynonym`, because `is_synonym` defaulted to `False` rather than `None`.
+  - Restating a property's current datatype reset `isNestedObject` to `False` and `isLangString` to `True`. It now changes nothing. Changing the datatype to text or to a class still gives the property `create_property`'s defaults, unless `is_lang_string` or `is_nested` is passed.
+
+### Changed
+- `update_property` raises `ValueError` for `is_nested=True` on a property that is not an object property, and for `is_lang_string=True` on one that is not text, instead of ignoring them. Each is checked against the property's new datatype when `datatype` is passed. `False` for a flag the property cannot have still changes nothing.
+- `create_property` likewise raises `ValueError` for `is_nested=True` on a property that is not an object property. `is_lang_string` is still ignored for one that is not text, since it defaults to `True`.
+
 ## [0.14.0] - 2026-11-19
 
 ### Added

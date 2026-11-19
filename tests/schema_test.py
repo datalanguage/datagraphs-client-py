@@ -1,3 +1,4 @@
+import copy
 import dataclasses
 import json
 import sys
@@ -1198,3 +1199,131 @@ class TestEnumPropertyNeedsPermittedValues:
         del size["validationRules"]
         self.schema = DatagraphsSchema.create_from(data)
         self.assert_rejected_without_change(lambda: self.schema.create_subclass("Part", "", "Thing"))
+
+
+class TestUpdatePropertyChangesOnlyWhatIsGiven:
+
+    @pytest.fixture(autouse=True)
+    def setup_schema(self):
+        self.schema = DatagraphsSchema()
+        self.schema.create_class("Adjuvant")
+        self.schema.create_class("Product")
+        # Every flag set away from its default, so a reset cannot go unnoticed.
+        self.schema.create_property(
+            "Product", "adjuvant", "Adjuvant", description="tank mix", is_optional=False,
+            is_array=True, is_nested=True, is_synonym=True, is_filterable=True)
+        self.schema.create_property(
+            "Product", "brand", DATATYPE.TEXT, is_lang_string=False, is_synonym=True,
+            is_filterable=True, validation_rules=[MIN_3])
+
+    def prop(self, name, class_name="Product"):
+        return copy.deepcopy(self.schema.find_property(self.schema.find_class(class_name)["properties"], name))
+
+    def assert_only_changed(self, name, update, changed):
+        before = self.prop(name)
+        self.schema.update_property("Product", name, **update)
+        assert self.prop(name) == {**before, **changed}
+
+    def test_should_make_an_object_property_nested_and_an_array_together(self):
+        self.schema.create_property("Product", "plain", "Adjuvant")
+        self.assert_only_changed("plain", {"is_nested": True, "is_array": True}, {"isNestedObject": True, "isArray": True})
+
+    @pytest.mark.parametrize(("name", "update", "changed"), [
+        ("adjuvant", {"is_nested": False}, {"isNestedObject": False}),
+        ("adjuvant", {"is_array": False}, {"isArray": False}),
+        ("adjuvant", {"is_optional": True}, {"isOptional": True}),
+        ("adjuvant", {"is_synonym": False}, {"isLabelSynonym": False}),
+        ("adjuvant", {"is_filterable": False}, {"isFilterable": False}),
+        ("adjuvant", {"description": "new"}, {"description": {"en": "new", "@none": "new"}}),
+        ("adjuvant", {"datatype": "Adjuvant"}, {}),
+        ("brand", {"is_lang_string": True}, {"isLangString": True}),
+        ("brand", {"is_synonym": False}, {"isLabelSynonym": False}),
+        ("brand", {"datatype": DATATYPE.TEXT}, {}),
+        ("brand", {"validation_rules": [MAX_50]}, {"validationRules": [{"type": "maxLength", "value": 50}]}),
+    ])
+    def test_should_change_only_the_fields_given(self, name, update, changed):
+        self.assert_only_changed(name, update, changed)
+
+    @pytest.mark.parametrize(("name", "update"), [
+        ("adjuvant", {"is_lang_string": False}),
+        ("brand", {"is_nested": False}),
+    ])
+    def test_should_ignore_a_false_flag_the_property_cannot_have(self, name, update):
+        self.assert_only_changed(name, update, {})
+
+    @pytest.mark.parametrize(("start", "update", "expected"), [
+        (DATATYPE.INTEGER, {"datatype": DATATYPE.TEXT}, {"isLangString": True}),
+        (DATATYPE.INTEGER, {"datatype": DATATYPE.TEXT, "is_lang_string": False}, {"isLangString": False}),
+        (DATATYPE.INTEGER, {"datatype": "Adjuvant"}, {"isNestedObject": False}),
+        (DATATYPE.INTEGER, {"datatype": "Adjuvant", "is_nested": True}, {"isNestedObject": True}),
+        ("Adjuvant", {"datatype": DATATYPE.TEXT}, {"isLangString": True}),
+    ])
+    def test_should_give_a_changed_datatype_the_create_defaults_unless_flags_are_given(self, start, update, expected):
+        self.schema.create_property("Product", "other", start)
+        self.schema.update_property("Product", "other", **update)
+        prop = self.prop("other")
+        assert {key: prop.get(key) for key in expected} == expected
+        assert ("isNestedObject" in prop) == (prop["type"] == "ObjectProperty")
+        assert ("isLangString" in prop) == (prop["type"] == "DatatypeProperty")
+
+    @pytest.mark.parametrize(("name", "update", "message"), [
+        ("brand", {"is_nested": True}, r"Product\.brand is a text property, so it cannot be nested"),
+        ("adjuvant", {"datatype": DATATYPE.TEXT, "is_nested": True}, r"Product\.adjuvant is a text property, so it cannot be nested"),
+        ("adjuvant", {"is_lang_string": True}, r"Product\.adjuvant is an object property, so it cannot be multilingual"),
+        ("brand", {"datatype": DATATYPE.KEYWORD, "is_lang_string": True}, r"Product\.brand is a keyword property, so it cannot be multilingual"),
+    ])
+    def test_should_reject_a_true_flag_the_datatype_cannot_have(self, name, update, message):
+        before = self.schema.to_dict()
+        with pytest.raises(ValueError, match=message):
+            self.schema.update_property("Product", name, description="changed", **update)
+        assert self.schema.to_dict() == before
+
+    def test_should_check_a_flag_against_the_new_datatype(self):
+        self.schema.update_property("Product", "adjuvant", datatype=DATATYPE.TEXT, is_lang_string=False)
+        assert self.prop("adjuvant")["isLangString"] is False
+
+    def test_should_nest_the_property_on_every_subclass(self):
+        self.schema.create_property("Product", "plain", "Adjuvant")
+        self.schema.create_subclass("Herbicide", "", "Product")
+        self.schema.update_property("Product", "plain", is_nested=True, apply_to_subclasses=True)
+        assert self.prop("plain")["isNestedObject"] is True
+        assert self.prop("plain", "Herbicide")["isNestedObject"] is True
+
+
+class TestCreatePropertyNesting:
+
+    @pytest.fixture(autouse=True)
+    def setup_schema(self):
+        self.schema = DatagraphsSchema()
+        self.schema.create_class("Adjuvant")
+        self.schema.create_class("Product")
+
+    @pytest.mark.parametrize("datatype", [DATATYPE.TEXT, DATATYPE.INTEGER, DATATYPE.ENUM])
+    def test_should_reject_nesting_a_property_that_is_not_an_object_property(self, datatype):
+        before = self.schema.to_dict()
+        with pytest.raises(ValueError, match=rf"Product\.prop is a {datatype} property, so it cannot be nested"):
+            self.schema.create_property("Product", "prop", datatype, is_nested=True, enums=["S"] if datatype == DATATYPE.ENUM else None)
+        assert self.schema.to_dict() == before
+
+    @pytest.mark.parametrize("is_nested", [True, False])
+    def test_should_create_an_object_property_nested_or_not(self, is_nested):
+        self.schema.create_property("Product", "adjuvant", "Adjuvant", is_nested=is_nested)
+        prop = self.schema.find_property(self.schema.find_class("Product")["properties"], "adjuvant")
+        assert prop["isNestedObject"] is is_nested
+
+    def test_should_create_a_datatype_property_without_a_nesting_flag(self):
+        self.schema.create_property("Product", "name2", DATATYPE.TEXT, is_nested=False)
+        prop = self.schema.find_property(self.schema.find_class("Product")["properties"], "name2")
+        assert "isNestedObject" not in prop
+
+    def test_should_subclass_a_class_whose_datatype_property_carries_a_stray_nesting_flag(self):
+        self.schema.create_property("Product", "code", DATATYPE.TEXT)
+        self.schema.create_property("Product", "adjuvant", "Adjuvant", is_nested=True)
+        data = self.schema.to_dict()
+        code = next(p for p in data["classes"][1]["properties"] if p["name"] == "code")
+        code["isNestedObject"] = True
+        self.schema = DatagraphsSchema.create_from(data)
+        self.schema.create_subclass("Herbicide", "", "Product")
+        props = self.schema.find_class("Herbicide")["properties"]
+        assert "isNestedObject" not in self.schema.find_property(props, "code")
+        assert self.schema.find_property(props, "adjuvant")["isNestedObject"] is True

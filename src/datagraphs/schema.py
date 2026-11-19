@@ -41,7 +41,6 @@ _RULE_TYPES_BY_DATATYPE: dict[str, frozenset[VALIDATION_RULE_TYPE]] = {
     DATATYPE.KEYWORD: _TEXT_RULE_TYPES,
 }
 
-
 @dataclass(frozen=True)
 class ValidationRule:
     """A validation rule for a property, e.g. ``ValidationRule(VALIDATION_RULE_TYPE.MAX_LENGTH, 200)``.
@@ -333,7 +332,9 @@ class Schema:
                         desc,
                         prop_def.get('isOptional', True),
                         prop_def.get('isArray', False),
-                        prop_def.get('isNestedObject', False),
+                        # A datatype property loaded from elsewhere may carry
+                        # a stray isNestedObject; it can only be inherited as False.
+                        prop_def.get('isNestedObject', False) if datatype not in DATATYPE else False,
                         prop_def.get('isLangString', False),
                         prop_def.get('inverseOf', ''),
                         enums,
@@ -537,7 +538,8 @@ class Schema:
         :param description: Human-readable description.
         :param is_optional: Whether the property is optional.
         :param is_array: Whether the property holds multiple values.
-        :param is_nested: Whether an object property is nested (embedded).
+        :param is_nested: Whether an object property is nested (embedded). Only
+            an object property can be nested.
         :param is_lang_string: For text properties, whether to support multiple
             languages.
         :param inverse_of: Name of the inverse property on the target class
@@ -557,10 +559,10 @@ class Schema:
         :raises InvalidInversePropertyError: If the inverse property specification
             is invalid.
         :raises TypeError: If *validation_rules* holds anything but `ValidationRule`.
-        :raises ValueError: If a rule, or *enums*, does not suit *datatype*; if
-            *validation_rules* holds two rules of one type or a minimum length
-            above the maximum length; or if both *enums* and *validation_rules*
-            are given.
+        :raises ValueError: If a rule, *enums* or ``is_nested=True`` does not
+            suit *datatype*; if *validation_rules* holds two rules of one type
+            or a minimum length above the maximum length; or if both *enums*
+            and *validation_rules* are given.
         :raises InvalidEnumeratorError: If *datatype* is ``DATATYPE.ENUM`` and
             neither *enums* nor an ``ENUM`` rule gives any permitted values.
         """
@@ -570,6 +572,9 @@ class Schema:
             self._check_validation_rules(f"{class_name}.{prop_name}", str(datatype), enums, validation_rules)
             if not (hasattr(datatype, 'value') and (datatype.value in {i.value for i in DATATYPE})) and not isinstance(datatype, str):
                 raise TypeError(f"Unspecified datatype for {class_name}.{prop_name}")
+            # is_lang_string is not checked: it defaults to True, which is the
+            # usual call for a property that is not text, and is ignored there.
+            self._check_flags_suit_datatype(f"{class_name}.{prop_name}", str(datatype), is_nested, None)
 
             # Build the by-name and parent->children indices ONCE (FIX round-4 B3):
             # a single O(C) pass replaces the per-level O(C) find_subclasses /
@@ -736,6 +741,17 @@ class Schema:
             prop_def.pop("validationRules", None)
 
     @staticmethod
+    def _check_flags_suit_datatype(where: str, datatype: str, is_nested: bool | None, is_lang_string: bool | None) -> None:
+        """Reject ``is_nested=True`` for a property that is not an object
+        property, and ``is_lang_string=True`` for one that is not text, rather
+        than ignore them. *datatype* is the property's datatype once updated."""
+        if is_nested and datatype in DATATYPE:
+            raise ValueError(f"{where} is a {datatype} property, so it cannot be nested: only an object property can")
+        if is_lang_string and datatype != DATATYPE.TEXT:
+            kind = "an object" if datatype not in DATATYPE else f"a {datatype}"
+            raise ValueError(f"{where} is {kind} property, so it cannot be multilingual: only a text property can")
+
+    @staticmethod
     def _check_validation_rules(
         where: str, datatype: str, enums: list | None,
         validation_rules: list[ValidationRule] | None, existing_prop: dict | None = None,
@@ -828,7 +844,7 @@ class Schema:
         is_lang_string: bool | None = None,
         inverse_of: str = "",
         enums: list | None = None,
-        is_synonym: bool = False,
+        is_synonym: bool | None = None,
         is_filterable: bool | None = None,
         validation_rules: list[ValidationRule] | None = None,
         apply_to_subclasses: bool | None = None,
@@ -840,12 +856,17 @@ class Schema:
 
         :param class_name: Class containing the property.
         :param prop_name: Property name to update.
-        :param datatype: New data type.
+        :param datatype: New data type. Restating the current datatype changes
+            nothing. Changing it to text or to a class gives the property the
+            defaults of `create_property` (multilingual; not nested) unless
+            *is_lang_string* or *is_nested* says otherwise.
         :param description: New description.
         :param is_optional: Whether the property is optional.
         :param is_array: Whether the property holds multiple values.
-        :param is_nested: Whether an object property is nested.
-        :param is_lang_string: Whether the property supports multiple languages.
+        :param is_nested: Whether an object property is nested. Only an object
+            property can be nested.
+        :param is_lang_string: Whether a text property supports multiple
+            languages. Only a text property can.
         :param inverse_of: Name of the inverse property on the target class. Validated
             against *datatype* when one is given, otherwise against the property's
             existing range, so an inverse can be added without restating the type.
@@ -866,10 +887,11 @@ class Schema:
             property on the target class whose range is *class_name* or one of its
             base classes.
         :raises TypeError: If *validation_rules* holds anything but `ValidationRule`.
-        :raises ValueError: If a rule, or *enums*, does not suit the property's
-            datatype; if *validation_rules* holds two rules of one type or a
-            minimum length above the maximum length; or if both *enums* and
-            *validation_rules* are given.
+        :raises ValueError: If a rule, *enums*, ``is_nested=True`` or
+            ``is_lang_string=True`` does not suit the property's datatype; if
+            *validation_rules* holds two rules of one type or a minimum length
+            above the maximum length; or if both *enums* and *validation_rules*
+            are given.
         :raises InvalidEnumeratorError: If the property is, or becomes, an enum
             property and the update would leave it without permitted values:
             e.g. changing *datatype* to ``DATATYPE.ENUM`` without *enums*, or
@@ -902,6 +924,7 @@ class Schema:
                 # same-named property on a subclass need not share.
                 effective_datatype = str(datatype) if datatype is not None else pdef["range"]
                 self._check_validation_rules(f"{name}.{prop_name}", effective_datatype, enums, validation_rules, pdef)
+                self._check_flags_suit_datatype(f"{name}.{prop_name}", effective_datatype, is_nested, is_lang_string)
                 targets.append((cdef, pdef))
 
             # Apply iteratively (no Python recursion; FIX B4).  ALL-OR-NOTHING:
@@ -948,9 +971,23 @@ class Schema:
             self._assign_is_array(prop_def, is_array)
         if datatype is not None:
             old_range = prop_def.get("range")
-            self._assign_datatype(prop_def, datatype, is_nested if is_nested is not None else False, is_lang_string if is_lang_string is not None else True)
+            was_text = old_range == DATATYPE.TEXT
+            was_object = prop_def.get("type") == "ObjectProperty"
+            # A flag the caller left out keeps its current value when the
+            # property already had it, and otherwise takes create_property's
+            # default; _assign_datatype sets both whatever the new datatype.
+            nested = is_nested if is_nested is not None else (prop_def.get("isNestedObject", False) if was_object else False)
+            lang_string = is_lang_string if is_lang_string is not None else (prop_def.get("isLangString", True) if was_text else True)
+            self._assign_datatype(prop_def, datatype, nested, lang_string)
             if prop_def["range"] != old_range:
                 self._drop_rules_unsuited_to_datatype(prop_def)
+        else:
+            # The caller has checked that a True flag suits the datatype; a
+            # False one on a property that cannot have the flag changes nothing.
+            if is_nested is not None and prop_def.get("type") == "ObjectProperty":
+                prop_def["isNestedObject"] = is_nested
+            if is_lang_string is not None and prop_def.get("range") == DATATYPE.TEXT:
+                prop_def["isLangString"] = is_lang_string
         if inverse_of is not None:
             # Fall back to the property's existing range when the caller did not
             # restate the datatype — the same thing the enum branch below does.
