@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - `is_nested` and `is_lang_string` were ignored unless `datatype` was passed too, so `update_property(..., is_nested=True)` left an object property not nested.
   - Every update cleared `isLabelSynonym`, because `is_synonym` defaulted to `False` rather than `None`.
   - Restating a property's current datatype reset `isNestedObject` to `False` and `isLangString` to `True`. It now changes nothing. Changing the datatype to text or to a class still gives the property `create_property`'s defaults, unless `is_lang_string` or `is_nested` is passed.
+- **Base classes' direct instances were neither exported nor loaded.** `Gateway.dump_data` and `Gateway.load_data` skipped every class with subclasses when handling all classes, so a dump-then-load round trip lost them.
+  - `dump_data` now exports every class each dataset lists. A base class's `<ClassName>.json` holds only its direct instances. The API returns its subclasses' instances with it, and those are left to the subclasses' own files. This also applies when a single base class is dumped by name, which used to write its subclasses' instances into its file too.
+  - `load_data` now loads every class each dataset lists, base classes included, from its own `<ClassName>.json`.
 
 ### Changed
 - `update_property` raises `ValueError` for `is_nested=True` on a property that is not an object property, and for `is_lang_string=True` on one that is not text, instead of ignoring them. Each is checked against the property's new datatype when `datatype` is passed. `False` for a flag the property cannot have still changes nothing.

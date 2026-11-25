@@ -265,12 +265,11 @@ class Gateway:
     ) -> LoadResult:
         """Load data from JSON files into the DataGraphs project.
 
-        Base classes (those with subclasses) are automatically skipped when
-        loading all classes. Check `LoadResult.ok` on the result: a load that
-        returns normally may still have failed or timed-out entities.
+        Check `LoadResult.ok` on the result: a load that returns normally may
+        still have failed or timed-out entities.
 
         :param class_name: The class name to load, or ``Schema.ALL_CLASSES`` to
-            load every non-base class found across all datasets.
+            load every class found across all datasets, base classes included.
         :param from_dir_path: Directory containing ``<ClassName>.json`` files.
         :param file_path: Explicit path to a single JSON file (used when loading
             a specific *class_name*).
@@ -318,14 +317,9 @@ class Gateway:
                 result.skipped[class_name] = SkippedClass(SkipReason.NOT_IN_DATASET)
                 return []
             return [(class_name, dataset.slug)]
-        plan = []
-        for dataset in datasets:
-            for dataset_class in dataset.classes:
-                if len(self._get_schema().find_subclasses(dataset_class)) == 0:
-                    plan.append((dataset_class, dataset.slug))
-                else:
-                    _logger.info('%s is a baseclass - not loading as data will be loaded via subclasses', dataset_class)
-        return plan
+        # A base class is loaded like any other: if a dataset lists it, the
+        # dataset holds direct instances of it, which its subclasses' files do not.
+        return [(dataset_class, dataset.slug) for dataset in datasets for dataset_class in dataset.classes]
 
     def _load_data_for_class(self, result: LoadResult, class_name: str, dataset_slug: str, isolation: ISOLATION_MODE, from_dir_path: str | Path = "", file_path: str | Path = "") -> None:
         """Load data for a specific class from a JSON file, accounting for it in *result*."""
@@ -441,13 +435,14 @@ class Gateway:
         only once every entity of the class has been read, so a file never
         holds a partial export. A class that cannot be read is reported in
         `DumpResult.failed` and the remaining classes are still exported:
-        check `DumpResult.ok` on the result. Base classes are automatically
-        skipped.
+        check `DumpResult.ok` on the result. A base class's file holds only its
+        direct instances: its subclasses' instances, which the API returns with
+        it, are left to their own files.
 
         :param to_dir_path: Target directory. Created automatically if it does
             not exist.
         :param class_name: The class name to dump, or ``Schema.ALL_CLASSES``
-            for all.
+            for every class across all datasets, base classes included.
         :param excluded_class_names: Comma-separated list of classes to exclude from the export if class_name is ``Schema.ALL_CLASSES``.
         :param include_date_fields: Whether to include system date metadata.
         :returns: The outcome of the export, per class.
@@ -464,6 +459,10 @@ class Gateway:
         result = DumpResult()
         try:
             plan = self._classes_to_dump(class_name, excluded_class_names)
+            # Read the schema, used to tell a base class's direct instances from its
+            # subclasses', before exporting anything, so failing to read it fails
+            # the export as a whole rather than the first class.
+            self._get_schema()
             for n, plan_class in enumerate(plan):
                 try:
                     self._dump_class(result, plan_class, to_dir_path, include_date_fields)
@@ -481,7 +480,7 @@ class Gateway:
         return result
 
     def _classes_to_dump(self, class_name: str, excluded_class_names: str) -> list[str]:
-        """The classes to export, in order: every non-base, non-excluded class across all datasets, or just *class_name*."""
+        """The classes to export, in order: every non-excluded class across all datasets, or just *class_name*."""
         if class_name != Schema.ALL_CLASSES:
             return [class_name]
         excluded_classes = {cls.strip() for cls in excluded_class_names.split(',')} if excluded_class_names else set()
@@ -489,7 +488,7 @@ class Gateway:
             dataset_class
             for dataset in self._client.get_datasets()
             for dataset_class in dataset.classes
-            if dataset_class not in excluded_classes and len(self._get_schema().find_subclasses(dataset_class)) == 0
+            if dataset_class not in excluded_classes
         ]
 
     @staticmethod
@@ -514,7 +513,10 @@ class Gateway:
         result.exported += count
 
     def _persist_to_file(self, class_name: str, to_dir_path: Path, include_date_fields: bool) -> tuple[Path, int]:
-        """Fetch entities of *class_name* from the API and write them to a JSON file.
+        """Fetch the direct instances of *class_name* from the API and write them to a JSON file.
+
+        The API returns a base class's subclass instances with it; those are
+        dropped, as each subclass is exported to its own file.
 
         The file is written to a temporary name and then renamed into place, so
         it is either complete or left as it was. It keeps the permissions of the
@@ -523,7 +525,7 @@ class Gateway:
         :returns: The file written, and the number of entities in it.
         """
         _logger.info('Fetching data for %s...', class_name)
-        data = self._client.get(class_name=class_name, include_date_fields=include_date_fields)
+        data = self._direct_instances(class_name, self._client.get(class_name=class_name, include_date_fields=include_date_fields))
         file_path = to_dir_path.joinpath(f'{class_name}.json')
         mode = file_path.stat().st_mode & 0o7777 if file_path.exists() else 0o666 & ~_UMASK
         fd, tmp_path = tempfile.mkstemp(dir=to_dir_path, prefix=f'.{class_name}.', suffix='.json.tmp')
@@ -537,6 +539,15 @@ class Gateway:
             Path(tmp_path).unlink(missing_ok=True)
             raise
         return file_path, len(data)
+
+    def _direct_instances(self, class_name: str, entities: list[dict]) -> list[dict]:
+        """*entities* without those whose type is a subclass of *class_name*."""
+        subclass_names = {cls['name'] for cls in self._get_schema().find_subclasses(class_name, recursive=True)}
+        if not subclass_names:
+            return entities
+        direct = [entity for entity in entities if entity.get('type') not in subclass_names]
+        _logger.info('Leaving %d subclass instances of %s to their own files', len(entities) - len(direct), class_name)
+        return direct
 
     def clear_down(self) -> None:
         """Clear all data from all datasets in the project.

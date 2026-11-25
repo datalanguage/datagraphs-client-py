@@ -104,13 +104,30 @@ class TestDumpData:
             files={name: WORKING_DIR / f'{name}.json' for name in ('SubstanceRole', 'BufferZoneType')},
         )
 
-    def test_should_skip_baseclasses_when_dumping_all(self, gateway, mock_client, mock_schema):
-        dataset = Dataset(name='Test Dataset', project='test-project', classes=['BaseClass', 'SubstanceRole'])
-        mock_client.get_datasets.return_value = [dataset]
-        mock_schema.find_subclasses.side_effect = lambda name: [{'name': 'Child'}] if name == 'BaseClass' else []
-        mock_client.get.return_value = []
-        gateway.dump_data(to_dir_path=str(WORKING_DIR))
-        mock_client.get.assert_called_once()
+    def test_should_dump_only_the_direct_instances_of_baseclasses_when_dumping_all(self, gateway, mock_client, mock_schema, tmp_path):
+        mock_client.get_datasets.return_value = [Dataset(name='Test Dataset', project='test-project', classes=['Base', 'Child', 'GrandChild'])]
+        hierarchy = {'Base': ['Child', 'GrandChild'], 'Child': ['GrandChild']}
+        mock_schema.find_subclasses.side_effect = lambda name, recursive=False: [{'name': n} for n in hierarchy.get(name, [])]
+        base = {'id': 'urn:test-project:Base:1', 'type': 'Base'}
+        child = {'id': 'urn:test-project:Child:1', 'type': 'Child'}
+        grandchild = {'id': 'urn:test-project:GrandChild:1', 'type': 'GrandChild'}
+        unexpected = {'id': 'urn:test-project:Base:2'}  # kept: not known to belong to another file
+        # The API returns a class's subclass instances with it.
+        by_class = {'Base': [base, child, grandchild, unexpected], 'Child': [child, grandchild], 'GrandChild': [grandchild]}
+        mock_client.get.side_effect = lambda class_name, include_date_fields: by_class[class_name]
+        result = gateway.dump_data(to_dir_path=tmp_path)
+        written = {name: json.loads((tmp_path / f'{name}.json').read_text(encoding='utf-8')) for name in by_class}
+        assert written == {'Base': [base, unexpected], 'Child': [child], 'GrandChild': [grandchild]}
+        assert result == DumpResult(exported=4, files={name: tmp_path / f'{name}.json' for name in by_class})
+        assert result.ok
+
+    def test_should_dump_only_the_direct_instances_of_a_single_baseclass(self, gateway, mock_client, mock_schema, tmp_path):
+        mock_schema.find_subclasses.side_effect = lambda name, recursive=False: [{'name': 'Child'}] if name == 'Base' else []
+        base = {'id': 'urn:test-project:Base:1', 'type': 'Base'}
+        mock_client.get.return_value = [base, {'id': 'urn:test-project:Child:1', 'type': 'Child'}]
+        result = gateway.dump_data(to_dir_path=tmp_path, class_name='Base')
+        assert json.loads((tmp_path / 'Base.json').read_text(encoding='utf-8')) == [base]
+        assert result == DumpResult(exported=1, files={'Base': tmp_path / 'Base.json'})
 
     def test_should_exclude_specified_classes_when_dumping_all(self, gateway, mock_client, mock_schema):
         dataset = Dataset(name='Test Dataset', project='test-project', classes=['TypeA', 'TypeB', 'TypeC'])
@@ -210,7 +227,7 @@ class TestDumpData:
             Dataset(name='One', project='test-project', classes=['TypeA', 'Base', 'TypeB']),
             Dataset(name='Two', project='test-project', classes=['TypeC', 'Excluded', 'TypeD']),
         ]
-        mock_schema.find_subclasses.side_effect = lambda name: [{'name': 'Child'}] if name == 'Base' else []
+        mock_schema.find_subclasses.side_effect = lambda name, recursive=False: [{'name': 'Child'}] if name == 'Base' else []
         def get(class_name, include_date_fields):
             if class_name == 'TypeB':
                 raise error
@@ -220,14 +237,14 @@ class TestDumpData:
             gateway.dump_data(to_dir_path=WORKING_DIR, excluded_class_names='Excluded')
         result = exc_info.value.result
         assert result == DumpResult(
-            exported=2,
-            files={'TypeA': WORKING_DIR / 'TypeA.json'},
+            exported=4,
+            files={'TypeA': WORKING_DIR / 'TypeA.json', 'Base': WORKING_DIR / 'Base.json'},
             failed={'TypeB': error},
-            remaining=['TypeC', 'TypeD'],  # not Base (exported via its subclasses) or Excluded
+            remaining=['TypeC', 'TypeD'],  # not Excluded
         )
         assert not result.ok
-        assert [c.kwargs['class_name'] for c in mock_client.get.call_args_list] == ['TypeA', 'TypeB']
-        assert sorted(f.name for f in WORKING_DIR.iterdir()) == ['TypeA.json']
+        assert [c.kwargs['class_name'] for c in mock_client.get.call_args_list] == ['TypeA', 'Base', 'TypeB']
+        assert sorted(f.name for f in WORKING_DIR.iterdir()) == ['Base.json', 'TypeA.json']
         assert "1 classes failed: ['TypeB'], 2 classes not attempted: ['TypeC', 'TypeD']" in caplog.text
 
     def test_should_report_an_interrupted_single_class_export(self, gateway, mock_client):
@@ -303,14 +320,25 @@ class TestLoadData:
         assert mock_client.put.call_count == 2
         assert result.loaded == len(substance_role_data) * 2
 
-    def test_should_skip_baseclasses_when_loading_all(self, gateway, mock_client, mock_schema, substance_role_data):
-        dataset = Dataset(name='Test', project='test', classes=['BaseType', 'SubstanceRole'])
-        mock_client.get_datasets.return_value = [dataset]
-        mock_schema.find_subclasses.side_effect = lambda name: [{'name': 'Child'}] if name == 'BaseType' else []
-        with patch.object(Path, 'is_file', return_value=True), \
-             patch('builtins.open', mock_open(read_data=json.dumps(substance_role_data))):
-            gateway.load_data(from_dir_path=str(DATA_DIR))
-        mock_client.put.assert_called_once()
+    def test_should_load_baseclasses_from_their_own_files_when_loading_all(self, gateway, mock_client, mock_schema, tmp_path):
+        # A dataset lists a base class because it holds direct instances of it.
+        mock_client.get_datasets.return_value = [
+            Dataset(name='Bases', project='test-project', classes=['BaseType']),
+            Dataset(name='Children', project='test-project', classes=['ChildType']),
+        ]
+        mock_schema.find_subclasses.side_effect = lambda name, recursive=False: [{'name': 'ChildType'}] if name == 'BaseType' else []
+        base_entities = [{'id': 'urn:test-project:basetype:1', 'type': 'BaseType'}]
+        child_entities = [{'id': 'urn:test-project:childtype:1', 'type': 'ChildType'}]
+        (tmp_path / 'BaseType.json').write_text(json.dumps(base_entities), encoding='utf-8')
+        (tmp_path / 'ChildType.json').write_text(json.dumps(child_entities), encoding='utf-8')
+        result = gateway.load_data(from_dir_path=tmp_path)
+        assert [(c.args[0], c.args[1]) for c in mock_client.put.call_args_list] == [
+            ('bases', base_entities),
+            ('children', child_entities),
+        ]
+        assert result.loaded == 2
+        assert result.skipped == {}
+        assert result.ok
 
     def test_should_log_warning_when_file_not_found_for_dir_scan(self, gateway, mock_client, caplog):
         dataset = Dataset(name='Test', project='test', classes=['SubstanceRole'])
@@ -354,14 +382,6 @@ class TestLoadData:
         mock_client.get_datasets.return_value = [dataset]
         gateway.load_data(class_name='SubstanceRole', from_dir_path=DATA_DIR, file_path=SUBSTANCE_ROLE_FILE)
         mock_client.put.assert_called_once()
-
-    def test_should_log_baseclass_info(self, gateway, mock_client, mock_schema, caplog):
-        dataset = Dataset(name='Test', project='test', classes=['BaseType'])
-        mock_client.get_datasets.return_value = [dataset]
-        mock_schema.find_subclasses.return_value = [{'name': 'Child'}]
-        with caplog.at_level(logging.INFO):
-            gateway.load_data()
-        assert 'baseclass' in caplog.text
 
 class TestLoadDataOutcomes:
     """`load_data` reports, per class, every entity that was not confirmed as written."""
@@ -464,7 +484,7 @@ class TestLoadDataOutcomes:
         self.client.put.side_effect = AuthenticationError('denied')
         with pytest.raises(AuthenticationError) as exc_info:
             self.gateway.load_data(from_dir_path=self.dir)
-        assert exc_info.value.result.remaining == ['ClassB', 'ClassC', 'ClassD']  # Base loads via its subclasses
+        assert exc_info.value.result.remaining == ['Base', 'ClassB', 'ClassC', 'ClassD']
 
     def test_should_attach_an_empty_result_when_datasets_cannot_be_read_for_lack_of_a_token(self):
         self.client.get_datasets.side_effect = TokenRequestError(503, ['unavailable'], 'unavailable')
