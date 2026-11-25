@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-11-19
+
 ### Fixed
 - **`Schema.update_property` changed fields it was not given, and ignored some it was.** It now changes only the fields passed to it, as documented.
   - `is_nested` and `is_lang_string` were ignored unless `datatype` was passed too, so `update_property(..., is_nested=True)` left an object property not nested.
